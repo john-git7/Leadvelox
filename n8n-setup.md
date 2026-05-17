@@ -1,53 +1,63 @@
-# n8n Integration Setup
+# n8n Operational Orchestration Setup
 
-This document outlines how to set up the automated workflows in n8n for the Real Estate Lead Automation Platform.
+This document details the configuration of the **Dynamic Workflow Orchestration Engine** within n8n.
 
-## 1. Webhook Setup
+## 1. Webhook Intake Logic
 
-First, create a new Webhook in n8n:
-1. Add a **Webhook** node.
-2. Set the HTTP Method to `POST`.
-3. Set the Path to `leads-capture` (or anything you prefer).
-4. Copy the "Test URL" or "Production URL".
-5. Set this URL as your `N8N_WEBHOOK_URL` in the `.env.local` file of the Next.js app.
+**Webhook Node Configuration:**
+- **Method**: `POST`
+- **Path**: `leads-orchestration`
+- **Response**: `200 OK` (Immediate response to Next.js to avoid blocking).
 
-## 2. Workflow 1: New Lead Auto Response
+## 2. Branching by Operational Invariant
 
-This workflow triggers instantly when a new lead is captured.
+The Next.js intake engine passes `decay_status` and `urgency_score`. Use an **If Node** or **Switch Node** in n8n to branch the workflow logic:
 
-**Nodes needed:**
-1. **Webhook Node**: Configured as above.
-2. **Send Email Node** (e.g., SMTP, Gmail, Postmark, SendGrid).
-3. **Webhook Response Node** (Optional, to return a 200 OK immediately).
+### Branch A: HOT Leads (`urgency_score > 80`)
+- **Action**: Immediate SMS/Email alert to the priority agent pool.
+- **Action**: Instant auto-response email with personalized property link.
+- **Action**: Wait 15 minutes -> Check if status is still 'New Lead' -> Escalate to Manager.
 
-**Flow Setup:**
-1. Connect the **Webhook** node to the **Send Email** node.
-2. In the Email node, use expressions to map the incoming data:
-   - **To**: `={{$json.body.email}}`
-   - **Subject**: `Thanks for your property inquiry`
-   - **Body/Text**: 
-     ```
-     Hi {{$json.body.name}},
+### Branch B: COLD/WARM Leads (`urgency_score < 50`)
+- **Action**: Send standard inquiry acknowledgment.
+- **Action**: Add to 7-day email nurture sequence.
 
-     Thanks for your interest in our properties. 
-     Our team has received your information (Phone: {{$json.body.phone}}) and will contact you shortly.
+### Branch C: HIGH_RISK Leads (`decay_status = 'HIGH_RISK'`)
+- **Action**: Immediate internal Slack/Discord alert for "SLA BREACH".
+- **Action**: Re-assign to a different agent.
 
-     Best regards,
-     The Real Estate Team
-     ```
+## 3. Automation Health Feedback Loop
 
-## 3. Workflow 2: Lead Follow-Up Reminder
+To maintain the **Automation Health Dashboard**, the n8n workflow should ideally send status updates back to the platform if it fails.
 
-This workflow runs on a schedule to remind agents of uncontacted leads.
+**Error Handling Node:**
+If any node in n8n fails:
+1. Add an **Error Trigger** node.
+2. Connect it to an **HTTP Request** node.
+3. **Method**: `POST`
+4. **URL**: `YOUR_APP_URL/api/webhooks/automation-sync` (Future implementation)
+5. **Body**: 
+   ```json
+   {
+     "lead_id": "{{$node[\"Webhook\"].json[\"body\"][\"id\"]}}",
+     "workflow_name": "Lead Intake Workflow",
+     "status": "Failed",
+     "error_message": "{{$error.message}}"
+   }
+   ```
 
-**Nodes needed:**
-1. **Schedule Trigger Node** (Cron): Set it to run every morning at 9:00 AM (e.g., `0 9 * * *`).
-2. **Postgres Node**: Connect to your Supabase PostgreSQL database.
-   - **Operation**: Execute Query
-   - **Query**: `SELECT * FROM leads WHERE status = 'New Lead' AND created_at < NOW() - INTERVAL '1 day';`
-3. **If Node** (Optional): Check if any rows were returned.
-4. **Send Email Node**: Send a digest or individual emails to the agent/team.
+## 4. Daily Operational Audit (Cron)
 
-**Flow Setup:**
-1. Connect **Schedule Trigger** -> **Postgres** -> **Send Email**.
-2. If using an aggregate email, build a string containing all the names and phone numbers of the leads that need follow-up.
+**Schedule Trigger**: Every day at 08:00 AM.
+**Postgres Node**: 
+- **Query**: 
+  ```sql
+  SELECT * FROM leads 
+  WHERE status = 'New Lead' 
+  AND created_at < NOW() - INTERVAL '4 hours'
+  AND decay_status != 'HIGH_RISK';
+  ```
+- **Action**: Update these leads to `HIGH_RISK` via a Postgres update node or an HTTP call to a Next.js Server Action to trigger a `SLA Breach` event.
+
+---
+*By following this branching strategy, the system ensures that high-value revenue opportunities (HOT leads) are never neglected while maintaining low-cost automation for cold leads.*

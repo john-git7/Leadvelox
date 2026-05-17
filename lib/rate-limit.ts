@@ -1,30 +1,50 @@
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
 
 /**
- * PRODUCTION NOTE:
- * For high-traffic applications, use Redis (e.g., Upstash) for rate limiting.
- * This implementation uses Supabase as a lightweight alternative for portfolio purposes.
+ * Rate limiting using a dedicated rate_limits table.
+ *
+ * Tracks requests by an opaque identifier (hashed IP or email).
+ * Uses a sliding window: counts rows created within the last `windowMinutes`.
+ *
+ * PRODUCTION NOTE: For high-traffic deployments, replace this with Upstash Redis.
+ * Supabase is acceptable at SMB volumes (<1000 req/hr on this endpoint).
  */
-export async function checkRateLimit(ip: string, limit: number = 5, windowMinutes: number = 15) {
-  const supabase = await createClient();
-  
-  // Clean up old rate limit entries (simple cleanup)
+export async function checkRateLimit(
+  identifier: string,
+  limit: number = 5,
+  windowMinutes: number = 15
+): Promise<boolean> {
+  const supabase = await createAdminClient();
   const windowStart = new Date(Date.now() - windowMinutes * 60 * 1000).toISOString();
-  
-  // Count requests from this IP in the current window
-  // Note: This requires a 'rate_limits' table or similar. 
-  // For this project, we'll use a simpler 'recent_leads' check to prevent spam.
-  
+
+  // Count recent requests from this identifier within the sliding window
   const { count, error } = await supabase
-    .from('leads')
+    .from('rate_limits')
     .select('*', { count: 'exact', head: true })
-    .eq('email', ip) // Or use a proper IP tracking if available
+    .eq('identifier', identifier)
     .gt('created_at', windowStart);
 
   if (error) {
-    console.error('Rate limit check error:', error);
-    return true; // Fail open to not block users on DB error
+    // Fail open — do not block legitimate users if DB check fails
+    console.error('[checkRateLimit] DB error:', error.message);
+    return true;
   }
 
-  return (count || 0) < limit;
+  const requestCount = count ?? 0;
+  if (requestCount >= limit) {
+    return false; // Rate limit exceeded
+  }
+
+  // Record this request (fire-and-forget is acceptable here)
+  await supabase.from('rate_limits').insert([{ identifier }]);
+
+  // Prune old entries for this identifier to prevent unbounded table growth
+  supabase
+    .from('rate_limits')
+    .delete()
+    .eq('identifier', identifier)
+    .lt('created_at', windowStart)
+    .then(() => {/* ignore */});
+
+  return true;
 }

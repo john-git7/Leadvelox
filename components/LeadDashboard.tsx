@@ -1,16 +1,16 @@
 'use client';
 
-import { useState } from 'react';
-import { updateLeadStatus, deleteLead, updateLeadDetails } from '@/app/actions/leads';
+import { useState, useEffect } from 'react';
+import { updateLeadStatus, deleteLead, acknowledgeAlert } from '@/app/actions/leads';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { MoreVertical, Edit, Trash } from 'lucide-react';
+import { MoreVertical, Trash, AlertCircle, TrendingDown, Zap, ShieldAlert, Clock, AlertTriangle } from 'lucide-react';
+import { DecayStatus } from '@/lib/orchestration';
+import { SLAStatus } from '@/lib/sla';
 
 type Lead = {
   id: string;
@@ -19,223 +19,262 @@ type Lead = {
   phone: string;
   source: string;
   status: string;
+  urgency_score: number;
+  decay_status: DecayStatus;
+  is_duplicate: boolean;
+  response_deadline: string | null;
+  sla_status: SLAStatus;
+  sla_breached_at: string | null;
   created_at: string;
 };
 
-export default function LeadDashboard({ initialLeads }: { initialLeads: Lead[] }) {
-  const [leads, setLeads] = useState<Lead[]>(initialLeads);
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
-  
-  // Edit Modal State
-  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [editingLead, setEditingLead] = useState<Lead | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
+interface LeadDashboardProps {
+  leads: Lead[];
+  onLeadsChange: (leads: Lead[]) => void;
+  onLeadSelect?: (lead: Lead) => void;
+}
 
-  // Stats calculation
-  const stats = {
-    total: leads.length,
-    new: leads.filter(l => l.status === 'New Lead').length,
-    contacted: leads.filter(l => l.status === 'Contacted').length,
-    closed: leads.filter(l => l.status === 'Closed').length,
-    conversion: leads.length > 0 ? Math.round((leads.filter(l => l.status === 'Closed').length / leads.length) * 100) : 0
-  };
+export function SLATimer({ deadline, status }: { deadline: string | null, status: string }) {
+  const [timeLeft, setTimeLeft] = useState<string>('');
+  const [isBreached, setIsBreached] = useState(false);
+
+  useEffect(() => {
+    if (!deadline || status !== 'New Lead') return;
+
+    const calculate = () => {
+      const target = new Date(deadline).getTime();
+      const now = new Date().getTime();
+      const diff = target - now;
+
+      if (diff <= 0) {
+        setTimeLeft('SLA BREACHED');
+        setIsBreached(true);
+      } else {
+        const minutes = Math.floor(diff / (1000 * 60));
+        const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+        setTimeLeft(`${minutes}:${seconds.toString().padStart(2, '0')}`);
+        setIsBreached(false);
+      }
+    };
+
+    calculate();
+    const interval = setInterval(calculate, 1000);
+    return () => clearInterval(interval);
+  }, [deadline, status]);
+
+  if (!deadline || status !== 'New Lead') return null;
+
+  return (
+    <div className={`flex items-center gap-1.5 font-mono text-[9px] font-bold tracking-tighter ${isBreached ? 'text-red-500 animate-pulse' : 'text-orange-500'}`}>
+      {isBreached ? <AlertTriangle className="w-2.5 h-2.5" /> : <Clock className="w-2.5 h-2.5" />}
+      {isBreached ? 'BREACHED' : timeLeft}
+    </div>
+  );
+}
+
+export default function LeadDashboard({ leads, onLeadsChange, onLeadSelect }: LeadDashboardProps) {
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [leadToDelete, setLeadToDelete] = useState<Lead | null>(null);
 
   const handleStatusChange = async (id: string, newStatus: string) => {
     setUpdatingId(id);
     const result = await updateLeadStatus(id, newStatus);
-    
     if (result.success) {
-      toast.success('Status updated successfully');
-      setLeads(leads.map(lead => lead.id === id ? { ...lead, status: newStatus } : lead));
+      toast.success('Status synchronized');
+      onLeadsChange(leads.map(lead => lead.id === id ? { ...lead, status: newStatus } : lead));
     } else {
-      toast.error(result.error || 'Failed to update status');
+      toast.error('Failed to update status');
     }
     setUpdatingId(null);
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this lead? This cannot be undone.')) return;
+  const confirmDelete = async () => {
+    if (!leadToDelete) return;
     
-    const result = await deleteLead(id);
+    const result = await deleteLead(leadToDelete.id);
     if (result.success) {
-      toast.success('Lead deleted successfully');
-      setLeads(leads.filter(lead => lead.id !== id));
+      toast.success('Lead record terminated');
+      onLeadsChange(leads.filter(lead => lead.id !== leadToDelete.id));
     } else {
-      toast.error(result.error || 'Failed to delete lead');
+      toast.error('Termination failed');
+    }
+    setLeadToDelete(null);
+  };
+
+  const handleAcknowledge = async (id: string) => {
+    const result = await acknowledgeAlert(id);
+    if (result.success) {
+      toast.success('Alert acknowledged. Escalation paused.');
+      onLeadsChange(leads.map(lead => lead.id === id ? { ...lead, escalation_level: 0 } : lead));
+    } else {
+      toast.error('Failed to acknowledge alert');
     }
   };
 
-  const openEditDialog = (lead: Lead) => {
-    setEditingLead(lead);
-    setIsEditDialogOpen(true);
-  };
-
-  const handleEditSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!editingLead) return;
-    setIsSaving(true);
-
-    const formData = new FormData(e.currentTarget);
-    const result = await updateLeadDetails(editingLead.id, formData);
-
-    if (result.success) {
-      toast.success('Lead updated successfully');
-      const updatedData = {
-        name: formData.get('name') as string,
-        email: formData.get('email') as string,
-        phone: formData.get('phone') as string,
-        source: formData.get('source') as string,
-      };
-      setLeads(leads.map(lead => lead.id === editingLead.id ? { ...lead, ...updatedData } : lead));
-      setIsEditDialogOpen(false);
-    } else {
-      toast.error(result.error || 'Failed to update lead');
+  const getDecayColor = (status: DecayStatus) => {
+    switch (status) {
+      case 'HOT': return 'text-orange-500 bg-orange-500/10 border-orange-500/20';
+      case 'WARM': return 'text-yellow-500 bg-yellow-500/10 border-yellow-500/20';
+      case 'COLD': return 'text-blue-500 bg-blue-500/10 border-blue-500/20';
+      case 'HIGH_RISK': return 'text-red-500 bg-red-500/10 border-red-500/20';
+      default: return 'text-muted-foreground bg-muted/10 border-muted/20';
     }
-    setIsSaving(false);
-  };
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
   };
 
   return (
-    <div className="space-y-8">
-      {/* Stats Overview */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { label: 'Total Leads', value: stats.total, color: 'text-[#FAFAFA]' },
-          { label: 'New Inquiries', value: stats.new, color: 'text-[#A3A3A3]' },
-          { label: 'Contacted', value: stats.contacted, color: 'text-[#FAFAFA]' },
-          { label: 'Conversion', value: `${stats.conversion}%`, color: 'text-[#FAFAFA]' },
-        ].map((stat, i) => (
-          <div key={i} className="p-6 rounded-lg bg-[#111111] border border-[#262626] flex flex-col space-y-1">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{stat.label}</span>
-            <span className={`text-2xl font-bold tracking-tight ${stat.color}`}>{stat.value}</span>
-          </div>
-        ))}
-      </div>
-
-      <div className="rounded-md border border-[#262626] overflow-hidden bg-[#0A0A0A]">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader className="bg-[#111111] hover:bg-[#111111]">
-              <TableRow className="border-[#262626] hover:bg-transparent">
-                <TableHead className="text-muted-foreground font-medium min-w-[120px]">Name</TableHead>
-                <TableHead className="text-muted-foreground font-medium min-w-[200px]">Contact Info</TableHead>
-                <TableHead className="text-muted-foreground font-medium min-w-[100px]">Source</TableHead>
-                <TableHead className="text-muted-foreground font-medium min-w-[100px] hidden sm:table-cell">Date</TableHead>
-                <TableHead className="text-muted-foreground font-medium min-w-[140px]">Status</TableHead>
-                <TableHead className="text-muted-foreground font-medium w-[50px]"></TableHead>
+    <div className="bg-[#0A0A0A] border border-[#262626] rounded-md overflow-hidden">
+      <div className="overflow-x-auto">
+        <Table>
+          <TableHeader className="bg-[#111111]">
+            <TableRow className="border-[#262626] hover:bg-transparent">
+              <TableHead className="text-[10px] uppercase font-bold text-muted-foreground py-2">Lead / Intelligence</TableHead>
+              <TableHead className="text-[10px] uppercase font-bold text-muted-foreground py-2">SLA Status</TableHead>
+              <TableHead className="text-[10px] uppercase font-bold text-muted-foreground py-2">Score</TableHead>
+              <TableHead className="text-[10px] uppercase font-bold text-muted-foreground py-2">Decay</TableHead>
+              <TableHead className="text-[10px] uppercase font-bold text-muted-foreground py-2">Status</TableHead>
+              <TableHead className="text-[10px] uppercase font-bold text-muted-foreground py-2 text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {leads.length === 0 ? (
+              <TableRow className="border-[#262626]">
+                <TableCell colSpan={6} className="h-32 text-center text-[11px] text-muted-foreground">
+                  NO ACTIVE LEADS IN QUEUE
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {leads.length === 0 ? (
-                <TableRow className="border-[#262626]">
-                  <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
-                    No leads found.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                leads.map((lead) => (
-                  <TableRow key={lead.id} className="border-[#262626] hover:bg-[#111111]/50 transition-colors">
-                    <TableCell className="font-medium text-[#FAFAFA]">{lead.name}</TableCell>
-                    <TableCell>
-                      <div className="flex flex-col space-y-1">
-                        <span className="text-[#FAFAFA] text-sm break-all">{lead.email}</span>
-                        <span className="text-muted-foreground text-xs">{lead.phone}</span>
+            ) : (
+              leads.map((lead) => (
+                <TableRow 
+                  key={lead.id} 
+                  className="border-[#262626] hover:bg-[#111111]/50 cursor-pointer transition-colors group"
+                  onClick={() => onLeadSelect?.(lead)}
+                >
+                  <TableCell className="py-2">
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[13px] font-semibold text-[#FAFAFA]">{lead.name}</span>
+                        {lead.is_duplicate && (
+                          <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-500/10 border border-red-500/20 text-[9px] font-bold text-red-500 uppercase">
+                            <ShieldAlert className="w-2.5 h-2.5" /> Duplicate
+                          </div>
+                        )}
                       </div>
-                    </TableCell>
-                    <TableCell className="text-[#FAFAFA] capitalize text-sm">{lead.source}</TableCell>
-                    <TableCell className="text-[#FAFAFA] text-sm hidden sm:table-cell">{formatDate(lead.created_at)}</TableCell>
-                    <TableCell>
-                      <Select 
-                        defaultValue={lead.status} 
-                        onValueChange={(val) => handleStatusChange(lead.id, val as string)}
-                        disabled={updatingId === lead.id}
-                      >
-                        <SelectTrigger className="h-8 w-full bg-[#171717] border-[#262626] text-[#FAFAFA] text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="bg-[#171717] border-[#262626] text-[#FAFAFA]">
-                          <SelectItem value="New Lead">New Lead</SelectItem>
-                          <SelectItem value="Contacted">Contacted</SelectItem>
-                          <SelectItem value="Qualified">Qualified</SelectItem>
-                          <SelectItem value="Lost">Lost</SelectItem>
-                          <SelectItem value="Closed">Closed</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
-
-                    <TableCell>
+                      <span className="text-[10px] text-muted-foreground font-mono">{lead.source}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="py-2">
+                    <SLATimer deadline={lead.response_deadline} status={lead.status} />
+                  </TableCell>
+                  <TableCell className="py-2">
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 h-1 w-10 bg-[#171717] rounded-full overflow-hidden border border-[#262626]">
+                        <div 
+                          className={`h-full transition-all ${lead.urgency_score > 70 ? 'bg-orange-500' : 'bg-blue-500'}`} 
+                          style={{ width: `${lead.urgency_score}%` }} 
+                        />
+                      </div>
+                      <span className="text-[10px] font-mono font-bold text-[#FAFAFA]">{lead.urgency_score}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="py-2">
+                    <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[9px] font-bold border ${getDecayColor(lead.decay_status)}`}>
+                      {lead.decay_status === 'HOT' && <Zap className="w-2.5 h-2.5 fill-current" />}
+                      {lead.decay_status === 'HIGH_RISK' && <AlertCircle className="w-2.5 h-2.5" />}
+                      {lead.decay_status}
+                    </div>
+                  </TableCell>
+                  <TableCell className="py-2" onClick={(e) => e.stopPropagation()}>
+                    <Select 
+                      value={lead.status} 
+                      onValueChange={(val) => val && val !== lead.status && handleStatusChange(lead.id, val)}
+                      disabled={updatingId === lead.id}
+                    >
+                      <SelectTrigger className="h-6 w-[100px] bg-[#111111] border-[#262626] text-[9px] font-bold text-[#FAFAFA] uppercase tracking-tighter">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-[#0A0A0A] border-[#262626] text-[#FAFAFA]">
+                        <SelectItem value="New Lead" className="text-[10px] uppercase font-bold">New Lead</SelectItem>
+                        <SelectItem value="Contacted" className="text-[10px] uppercase font-bold">Contacted</SelectItem>
+                        <SelectItem value="Qualified" className="text-[10px] uppercase font-bold">Qualified</SelectItem>
+                        <SelectItem value="Lost" className="text-[10px] uppercase font-bold">Lost</SelectItem>
+                        <SelectItem value="Closed" className="text-[10px] uppercase font-bold">Closed</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </TableCell>
+                  <TableCell className="py-2 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      {lead.status === 'New Lead' && lead.sla_status === 'BREACHED' && (
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          onClick={(e) => { e.stopPropagation(); handleAcknowledge(lead.id); }}
+                          className="h-6 text-[9px] font-bold uppercase tracking-tighter bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/20 hover:text-red-400"
+                        >
+                          Acknowledge
+                        </Button>
+                      )}
                       <DropdownMenu>
-                      <DropdownMenuTrigger className="h-8 w-8 inline-flex items-center justify-center rounded-md text-muted-foreground hover:text-[#FAFAFA] hover:bg-[#111111] transition-colors focus:outline-none">
-                        <MoreVertical className="h-4 w-4" />
-                      </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="bg-[#171717] border-[#262626] text-[#FAFAFA]">
-                          <DropdownMenuItem onClick={() => openEditDialog(lead)} className="cursor-pointer focus:bg-[#262626] focus:text-[#FAFAFA]">
-                            <Edit className="mr-2 h-4 w-4" />
-                            Edit Lead
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleDelete(lead.id)} className="cursor-pointer text-red-500 focus:bg-red-500/10 focus:text-red-500">
-                            <Trash className="mr-2 h-4 w-4" />
-                            Delete Lead
+                        <DropdownMenuTrigger 
+                          render={
+                            <Button variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-[#FAFAFA] hover:bg-[#171717]" onClick={(e) => e.stopPropagation()}>
+                              <MoreVertical className="h-3 w-3" />
+                            </Button>
+                          }
+                        />
+                        <DropdownMenuContent align="end" className="bg-[#0A0A0A] border-[#262626] text-[#FAFAFA]">
+                          <DropdownMenuItem 
+                            className="text-[11px] font-medium text-red-500 focus:text-red-500 focus:bg-red-500/10 cursor-pointer"
+                            onClick={(e) => { e.stopPropagation(); setLeadToDelete(lead); }}
+                          >
+                            <Trash className="w-3.5 h-3.5 mr-2" /> Delete Operation
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
       </div>
 
-      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="bg-[#0A0A0A] border-[#262626] text-[#FAFAFA] sm:max-w-[425px]">
+      <Dialog open={!!leadToDelete} onOpenChange={(open) => !open && setLeadToDelete(null)}>
+        <DialogContent className="bg-[#0A0A0A] border border-[#262626] text-[#FAFAFA] sm:max-w-[425px]">
           <DialogHeader>
-            <DialogTitle>Edit Lead</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 text-red-500 uppercase tracking-tighter italic font-black text-xl">
+              <ShieldAlert className="w-5 h-5" />
+              Operational Warning
+            </DialogTitle>
+            <DialogDescription className="text-muted-foreground uppercase text-[10px] tracking-widest font-bold mt-2">
+              Are you sure you want to terminate this lead record?
+            </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleEditSubmit} className="space-y-4 pt-4">
-            <div className="space-y-2">
-              <Label htmlFor="name" className="text-[#FAFAFA]">Full Name</Label>
-              <Input id="name" name="name" defaultValue={editingLead?.name} required className="bg-[#111111] border-[#262626] text-[#FAFAFA]" />
+          <div className="py-4">
+            <div className="p-3 bg-[#111111] border border-[#262626] rounded-md font-mono text-[10px] text-muted-foreground">
+              <p>ID: {leadToDelete?.id}</p>
+              <p>Name: {leadToDelete?.name}</p>
+              <p className="text-red-500 mt-2">! THIS ACTION IS IRREVERSIBLE.</p>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="email" className="text-[#FAFAFA]">Email</Label>
-              <Input id="email" name="email" type="email" defaultValue={editingLead?.email} required className="bg-[#111111] border-[#262626] text-[#FAFAFA]" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="phone" className="text-[#FAFAFA]">Phone Number</Label>
-              <Input id="phone" name="phone" type="tel" defaultValue={editingLead?.phone} required className="bg-[#111111] border-[#262626] text-[#FAFAFA]" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="source" className="text-[#FAFAFA]">Source</Label>
-              <Select name="source" defaultValue={editingLead?.source} required>
-                <SelectTrigger className="bg-[#111111] border-[#262626] text-[#FAFAFA]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-[#171717] border-[#262626] text-[#FAFAFA]">
-                  <SelectItem value="google">Google Search</SelectItem>
-                  <SelectItem value="social">Social Media</SelectItem>
-                  <SelectItem value="referral">Referral</SelectItem>
-                  <SelectItem value="other">Other</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <DialogFooter className="pt-4">
-              <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)} className="bg-transparent border-[#262626] text-[#FAFAFA] hover:bg-[#171717] hover:text-[#FAFAFA]">
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isSaving} className="bg-[#FAFAFA] text-[#0A0A0A] hover:bg-[#E5E5E5]">
-                {isSaving ? 'Saving...' : 'Save Changes'}
-              </Button>
-            </DialogFooter>
-          </form>
+          </div>
+          <DialogFooter className="border-t border-[#262626] pt-4 sm:justify-start gap-2">
+            <Button 
+              type="button" 
+              variant="destructive"
+              onClick={confirmDelete}
+              className="bg-red-500 hover:bg-red-600 text-[#FAFAFA] font-bold text-[10px] uppercase tracking-wider"
+            >
+              Terminate Operation
+            </Button>
+            <Button 
+              type="button" 
+              variant="outline" 
+              onClick={() => setLeadToDelete(null)}
+              className="bg-[#111111] hover:bg-[#171717] border-[#262626] text-[#FAFAFA] font-bold text-[10px] uppercase tracking-wider"
+            >
+              Cancel
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

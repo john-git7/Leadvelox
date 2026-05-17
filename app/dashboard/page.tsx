@@ -1,8 +1,8 @@
 import { logout } from '@/app/actions/auth';
 import { getLeads } from '@/app/actions/leads';
-import LeadDashboard from '@/components/LeadDashboard';
+import CommandCenter from '@/components/CommandCenter';
 import { Button } from '@/components/ui/button';
-import { LogOut } from 'lucide-react';
+import { LogOut, Radio, Activity } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,24 +10,48 @@ export default async function DashboardPage() {
   const leads = await getLeads();
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A] p-8">
-      <div className="max-w-6xl mx-auto space-y-8">
-        <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <div>
-            <h1 className="text-3xl font-bold text-[#FAFAFA] tracking-tight">Command Center</h1>
-            <p className="text-muted-foreground mt-1">Manage your inbound property leads.</p>
+    <div className="min-h-screen bg-[#0A0A0A] text-[#FAFAFA]">
+      {/* GLOBAL SYSTEM HEADER */}
+      <div className="border-b border-[#262626] bg-[#0A0A0A] px-8 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2">
+            <div className="w-5 h-5 bg-[#FAFAFA] rounded-sm flex items-center justify-center">
+              <div className="w-2.5 h-2.5 bg-[#0A0A0A] rounded-full" />
+            </div>
+            <span className="text-sm font-bold tracking-tighter">LEAD OPS / INTEL</span>
           </div>
-          <form action={logout}>
-            <Button variant="outline" type="submit" className="bg-[#111111] border-[#262626] text-[#FAFAFA] hover:bg-[#171717]">
-              <LogOut className="w-4 h-4 mr-2" />
-              Sign Out
-            </Button>
-          </form>
-        </header>
+          <div className="hidden md:flex items-center gap-4 text-[10px] font-bold text-muted-foreground tracking-widest uppercase">
+            <span>Network: Stable</span>
+            <span className="flex items-center gap-1"><Radio className="w-3 h-3 text-green-500" /> Active Nodes: 4</span>
+            <a href="/dashboard/system-health" className="flex items-center gap-1 ml-4 text-blue-500 hover:text-blue-400">
+              <Activity className="w-3 h-3" /> System Health
+            </a>
+          </div>
+        </div>
 
-        <main>
-          <LeadDashboard initialLeads={leads} />
-        </main>
+        <form action={logout}>
+          <Button variant="ghost" type="submit" className="h-8 text-[11px] font-bold text-muted-foreground hover:text-[#FAFAFA] hover:bg-[#111111]">
+            <LogOut className="w-3.5 h-3.5 mr-2" /> TERMINATE SESSION
+          </Button>
+        </form>
+      </div>
+
+      <div className="p-8">
+        <div className="max-w-[1600px] mx-auto space-y-12">
+          {/* PAGE TITLE & CONTEXT */}
+          <header className="flex flex-col gap-2">
+            <h1 className="text-4xl font-black tracking-tight uppercase leading-none italic">
+              Command <span className="text-muted-foreground">Center</span>
+            </h1>
+            <p className="text-sm text-muted-foreground max-w-lg">
+              Monitoring operational invariants, lead decay vectors, and workflow orchestration health in real-time.
+            </p>
+          </header>
+
+          <main>
+            <CommandCenter initialLeads={leads} />
+          </main>
+        </div>
       </div>
     </div>
   );

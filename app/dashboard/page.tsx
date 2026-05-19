@@ -21,9 +21,7 @@ export default async function DashboardPage() {
             <span className="text-sm font-bold tracking-tighter">LEAD OPS / INTEL</span>
           </div>
           <div className="hidden md:flex items-center gap-4 text-[10px] font-bold text-muted-foreground tracking-widest uppercase">
-            <span>Network: Stable</span>
-            <span className="flex items-center gap-1"><Radio className="w-3 h-3 text-green-500" /> Active Nodes: 4</span>
-            <a href="/dashboard/system-health" className="flex items-center gap-1 ml-4 text-blue-500 hover:text-blue-400">
+            <a href="/dashboard/system-health" className="flex items-center gap-1 text-blue-500 hover:text-blue-400">
               <Activity className="w-3 h-3" /> System Health
             </a>
           </div>

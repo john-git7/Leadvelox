@@ -1,6 +1,7 @@
 'use client';
 
-import { CheckCircle2, XCircle, AlertCircle, RefreshCw, Activity } from 'lucide-react';
+import { useState } from 'react';
+import { CheckCircle2, XCircle, AlertCircle, RefreshCw, Activity, Filter } from 'lucide-react';
 
 type AutomationEvent = {
   id: string;
@@ -12,6 +13,9 @@ type AutomationEvent = {
 };
 
 export default function AutomationHealth({ events }: { events: AutomationEvent[] }) {
+  const [filter, setFilter] = useState<'All' | 'Success' | 'Failed' | 'Retrying'>('All');
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 5;
   const stats = {
     success: events.filter(e => e.status === 'Success').length,
     failed: events.filter(e => e.status === 'Failed').length,
@@ -20,24 +24,37 @@ export default function AutomationHealth({ events }: { events: AutomationEvent[]
 
   const successRate = stats.total > 0 ? Math.round((stats.success / stats.total) * 100) : 100;
 
+  const filteredEvents = events.filter(e => filter === 'All' || e.status === filter);
+  const displayedEvents = filteredEvents.slice(0, page * PAGE_SIZE);
+
   return (
-    <div className="bg-[#0A0A0A] border border-[#262626] rounded-lg overflow-hidden shadow-2xl">
-      <div className="p-4 border-b border-[#262626] flex justify-between items-center bg-[#111111]">
+    <div className="bg-[#0A0A0A] border border-[#262626] rounded-lg overflow-hidden shadow-2xl flex flex-col max-h-[500px]">
+      <div className="p-4 border-b border-[#262626] flex justify-between items-center bg-[#111111] shrink-0">
         <div className="flex items-center gap-2">
           <Activity className="w-3.5 h-3.5 text-green-500" />
           <h3 className="text-[10px] font-bold text-[#FAFAFA] uppercase tracking-widest">Automation Monitor</h3>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          <select 
+            className="bg-[#0A0A0A] border border-[#262626] text-[9px] uppercase font-bold text-[#FAFAFA] p-1 rounded"
+            value={filter}
+            onChange={(e) => { setFilter(e.target.value as any); setPage(1); }}
+          >
+            <option value="All">ALL STATUS</option>
+            <option value="Success">SUCCESS</option>
+            <option value="Failed">FAILED</option>
+            <option value="Retrying">RETRYING</option>
+          </select>
           <div className={`w-1.5 h-1.5 rounded-full ${successRate > 90 ? 'bg-green-500' : 'bg-yellow-500'} animate-pulse`} />
           <span className="text-[9px] font-bold text-muted-foreground uppercase">{successRate}% Health</span>
         </div>
       </div>
       
-      <div className="p-4 space-y-4">
-        {events.length === 0 ? (
-          <p className="text-[10px] text-muted-foreground text-center py-4 uppercase font-bold tracking-tighter">System Idle / Listening</p>
+      <div className="p-4 space-y-4 overflow-y-auto flex-1">
+        {filteredEvents.length === 0 ? (
+          <p className="text-[10px] text-muted-foreground text-center py-4 uppercase font-bold tracking-tighter">No events match filter</p>
         ) : (
-          events.slice(0, 5).map((event) => (
+          displayedEvents.map((event) => (
             <div key={event.id} className="flex items-center justify-between group">
               <div className="flex items-center gap-3">
                 <div className={`w-1.5 h-1.5 rounded-full ${
@@ -71,6 +88,15 @@ export default function AutomationHealth({ events }: { events: AutomationEvent[]
               </div>
             </div>
           ))
+        )}
+        
+        {displayedEvents.length < filteredEvents.length && (
+          <button 
+            onClick={() => setPage(p => p + 1)}
+            className="w-full mt-4 py-2 border border-[#262626] bg-[#111111] hover:bg-[#171717] rounded text-[10px] font-bold text-muted-foreground uppercase transition-colors"
+          >
+            Load More Events ({filteredEvents.length - displayedEvents.length} remaining)
+          </button>
         )}
       </div>
     </div>

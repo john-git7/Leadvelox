@@ -6,6 +6,7 @@ import OperationalTimeline from './OperationalTimeline';
 import AutomationHealth from './AutomationHealth';
 import IntegrationIndicators from './IntegrationIndicators';
 import RevenueRisk from './RevenueRisk';
+import DuplicateReview from './DuplicateReview';
 import {
   getLeadEvents,
   getAutomationHealth,
@@ -30,13 +31,14 @@ type LeadStats = {
 
 export default function CommandCenter({ initialLeads }: { initialLeads: any[] }) {
   const [leads, setLeads] = useState<any[]>(initialLeads);
-  const [selectedLead, setSelectedLead] = useState<any>(initialLeads[0] || null);
+  const [selectedLead, setSelectedLead] = useState<any>(null);
   const [events, setEvents] = useState<any[]>([]);
   const [healthEvents, setHealthEvents] = useState<any[]>([]);
   const [enforceBusinessHours, setEnforceBusinessHours] = useState(true);
   const [isToggling, setIsToggling] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [workflowHealthPct, setWorkflowHealthPct] = useState<string | null>(null);
+  const [dbStatus, setDbStatus] = useState<string>('UP');
   const [avgDealValue, setAvgDealValue] = useState(1200);
   // Aggregate stats — not dependent on paginated leads list
   const [stats, setStats] = useState<LeadStats>({
@@ -61,6 +63,7 @@ export default function CommandCenter({ initialLeads }: { initialLeads: any[] })
     setAvgDealValue((settings as any).avg_deal_value ?? 1200);
     // Real computed workflow health from automation_events table
     setWorkflowHealthPct(`${metrics.successRatio}%`);
+    setDbStatus(metrics.dbStatus || 'UP');
   }, []);
 
   const loadStats = useCallback(async () => {
@@ -137,15 +140,27 @@ export default function CommandCenter({ initialLeads }: { initialLeads: any[] })
   return (
     <div className="space-y-8">
       {/* HEADER CONTROLS STRIP */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-end gap-3">
-        <button
-          onClick={handleRefresh}
-          disabled={isRefreshing}
-          className="flex items-center gap-2 px-4 py-2.5 bg-[#111111] border border-[#262626] rounded-md shadow-sm hover:bg-[#171717] transition-colors text-muted-foreground hover:text-[#FAFAFA]"
-        >
-          <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-[#FAFAFA]' : ''}`} />
-          <span className="text-[10px] font-bold uppercase tracking-wider leading-none">Refresh Intel</span>
-        </button>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        {/* Real DB Status Indicator */}
+        <div className="flex items-center gap-3 px-4 py-2.5 bg-[#111111] border border-[#262626] rounded-md shadow-sm">
+          <Activity className="w-4 h-4 text-muted-foreground" />
+          <div className="flex flex-col">
+            <span className="text-[10px] font-bold text-[#FAFAFA] uppercase tracking-wider leading-none">DB Connection</span>
+            <span className={`text-[9px] font-mono mt-0.5 ${dbStatus === 'UP' ? 'text-green-500' : 'text-red-500'}`}>
+              {dbStatus === 'UP' ? 'STABLE' : 'DEGRADED'}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-3">
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="flex items-center gap-2 px-4 py-2.5 bg-[#111111] border border-[#262626] rounded-md shadow-sm hover:bg-[#171717] transition-colors text-muted-foreground hover:text-[#FAFAFA]"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-[#FAFAFA]' : ''}`} />
+            <span className="text-[10px] font-bold uppercase tracking-wider leading-none">Refresh Intel</span>
+          </button>
 
         <div className="flex items-center gap-3 px-4 py-2.5 bg-[#111111] border border-[#262626] rounded-md shadow-sm">
           <Settings2 className="w-4 h-4 text-muted-foreground" />
@@ -162,6 +177,7 @@ export default function CommandCenter({ initialLeads }: { initialLeads: any[] })
           >
             <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${enforceBusinessHours ? 'translate-x-5' : 'translate-x-1'}`} />
           </button>
+          </div>
         </div>
       </div>
 
@@ -191,6 +207,8 @@ export default function CommandCenter({ initialLeads }: { initialLeads: any[] })
             </div>
           </div>
 
+          <DuplicateReview />
+
           <LeadDashboard
             leads={leads}
             onLeadsChange={setLeads}
@@ -201,7 +219,7 @@ export default function CommandCenter({ initialLeads }: { initialLeads: any[] })
         {/* 3. OPERATIONAL INTELLIGENCE (4 Columns) */}
         <div className="col-span-12 lg:col-span-4 space-y-6 lg:sticky lg:top-8">
           {/* Revenue Risk Awareness */}
-          <RevenueRisk atRiskCount={stats.highRisk} estimatedLoss={estimatedLoss} />
+          <RevenueRisk atRiskCount={stats.highRisk} estimatedLoss={estimatedLoss} avgDealValue={avgDealValue} />
 
           {/* Ecosystem Status — real integration health */}
           <IntegrationIndicators />

@@ -42,6 +42,10 @@ export async function getIntegrationHealth(): Promise<IntegrationHealth> {
   const supabase = await createClient();
   const now = Date.now();
 
+  // Real DB probe — if this function can run, Supabase auth works,
+  // but the data plane could still be degraded.
+  const { error: dbProbeError } = await supabase.from('leads').select('id').limit(1);
+
   // 1. Cron Engine Health — last heartbeat from Inngest sla-check cron
   const { data: heartbeat } = await supabase
     .from('cron_heartbeat')
@@ -139,9 +143,9 @@ export async function getIntegrationHealth(): Promise<IntegrationHealth> {
       activeRetries,
     },
     database: {
-      status: 'healthy',
+      status: dbProbeError ? 'down' : 'healthy',
       label: 'Supabase',
-      detail: 'Connection active',
+      detail: dbProbeError ? `DB error: ${dbProbeError.message}` : 'Connection active',
     },
   };
 }

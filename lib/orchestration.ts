@@ -26,10 +26,10 @@ export function calculateDecayStatus(createdAt: string, lastContactedAt?: string
  */
 export function calculateUrgencyScore(decayStatus: DecayStatus): number {
   switch (decayStatus) {
-    case 'HOT': return 100;
+    case 'HOT': return 90;
     case 'WARM': return 70;
     case 'COLD': return 30;
-    case 'HIGH_RISK': return 90;
+    case 'HIGH_RISK': return 100;
     default: return 50;
   }
 }
@@ -74,7 +74,7 @@ export async function logAutomationEvent(
   nextRetryAt?: string
 ) {
   const supabase = await createAdminClient();
-  await supabase.from('automation_events').insert([{
+  const { error: insertError } = await supabase.from('automation_events').insert([{
     lead_id: leadId,
     workflow_name: workflowName,
     status: status,
@@ -84,6 +84,11 @@ export async function logAutomationEvent(
     endpoint_url: endpointUrl,
     next_retry_at: nextRetryAt
   }]);
+
+  if (insertError) {
+    console.error(`[logAutomationEvent] Failed to write event for lead ${leadId}:`, insertError.message);
+    throw new Error(`Automation audit log failure: ${insertError.message}`);
+  }
 }
 
 /**
@@ -121,6 +126,9 @@ export async function triggerOrchestration(leadId: string, leadData: any) {
   const payloadWithIdempotency = { ...leadData, orchestration_id: orchestration_id };
 
   try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    
     const res = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 
@@ -128,7 +136,10 @@ export async function triggerOrchestration(leadId: string, leadData: any) {
         'X-Orchestration-ID': orchestration_id
       },
       body: JSON.stringify(payloadWithIdempotency),
+      signal: controller.signal
     });
+    
+    clearTimeout(timer);
 
     const duration = Date.now() - startTime;
 

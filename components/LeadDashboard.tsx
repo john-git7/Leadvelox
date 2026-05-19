@@ -8,7 +8,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { MoreVertical, Trash, AlertCircle, TrendingDown, Zap, ShieldAlert, Clock, AlertTriangle } from 'lucide-react';
+import { MoreVertical, Trash, AlertCircle, TrendingDown, Zap, ShieldAlert, Clock, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { DecayStatus } from '@/lib/orchestration';
 import { SLAStatus } from '@/lib/sla';
 
@@ -26,6 +26,7 @@ type Lead = {
   sla_status: SLAStatus;
   sla_breached_at: string | null;
   created_at: string;
+  assigned_agent_id?: string | null;
 };
 
 interface LeadDashboardProps {
@@ -75,6 +76,22 @@ export function SLATimer({ deadline, status }: { deadline: string | null, status
 export default function LeadDashboard({ leads, onLeadsChange, onLeadSelect }: LeadDashboardProps) {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [leadToDelete, setLeadToDelete] = useState<Lead | null>(null);
+  const [page, setPage] = useState(0);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('All');
+  const PAGE_SIZE = 10;
+
+  const filteredLeads = leads.filter(lead => {
+    const matchesSearch = !searchQuery ||
+      lead.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      lead.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      lead.phone.includes(searchQuery);
+    const matchesStatus = statusFilter === 'All' || lead.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
+  const totalPages = Math.max(1, Math.ceil(filteredLeads.length / PAGE_SIZE));
+  const displayedLeads = filteredLeads.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   const handleStatusChange = async (id: string, newStatus: string) => {
     setUpdatingId(id);
@@ -123,12 +140,43 @@ export default function LeadDashboard({ leads, onLeadsChange, onLeadSelect }: Le
 
   return (
     <div className="bg-[#0A0A0A] border border-[#262626] rounded-md overflow-hidden">
+      {/* Search + Filter Bar */}
+      <div className="flex flex-col sm:flex-row gap-2 p-3 border-b border-[#262626] bg-[#0A0A0A]">
+        <input
+          type="text"
+          placeholder="Search name, email, phone..."
+          value={searchQuery}
+          onChange={e => { setSearchQuery(e.target.value); setPage(0); }}
+          className="flex-1 px-3 py-1.5 bg-[#111111] border border-[#262626] rounded text-[11px] text-[#FAFAFA] placeholder:text-muted-foreground focus:outline-none focus:border-[#404040] font-mono"
+        />
+        <select
+          value={statusFilter}
+          onChange={e => { setStatusFilter(e.target.value); setPage(0); }}
+          className="px-3 py-1.5 bg-[#111111] border border-[#262626] rounded text-[10px] text-[#FAFAFA] font-bold uppercase focus:outline-none focus:border-[#404040]"
+        >
+          <option value="All">ALL STATUS</option>
+          <option value="New Lead">NEW LEAD</option>
+          <option value="Contacted">CONTACTED</option>
+          <option value="Qualified">QUALIFIED</option>
+          <option value="Lost">LOST</option>
+          <option value="Closed">CLOSED</option>
+        </select>
+        {(searchQuery || statusFilter !== 'All') && (
+          <button
+            onClick={() => { setSearchQuery(''); setStatusFilter('All'); setPage(0); }}
+            className="px-3 py-1.5 bg-[#111111] border border-[#262626] rounded text-[10px] text-muted-foreground hover:text-[#FAFAFA] font-bold uppercase transition-colors"
+          >
+            Clear
+          </button>
+        )}
+      </div>
       <div className="overflow-x-auto">
         <Table>
           <TableHeader className="bg-[#111111]">
             <TableRow className="border-[#262626] hover:bg-transparent">
               <TableHead className="text-[10px] uppercase font-bold text-muted-foreground py-2">Lead / Intelligence</TableHead>
               <TableHead className="text-[10px] uppercase font-bold text-muted-foreground py-2">SLA Status</TableHead>
+              <TableHead className="text-[10px] uppercase font-bold text-muted-foreground py-2">Breach Time</TableHead>
               <TableHead className="text-[10px] uppercase font-bold text-muted-foreground py-2">Score</TableHead>
               <TableHead className="text-[10px] uppercase font-bold text-muted-foreground py-2">Decay</TableHead>
               <TableHead className="text-[10px] uppercase font-bold text-muted-foreground py-2">Status</TableHead>
@@ -136,14 +184,14 @@ export default function LeadDashboard({ leads, onLeadsChange, onLeadSelect }: Le
             </TableRow>
           </TableHeader>
           <TableBody>
-            {leads.length === 0 ? (
+            {displayedLeads.length === 0 ? (
               <TableRow className="border-[#262626]">
-                <TableCell colSpan={6} className="h-32 text-center text-[11px] text-muted-foreground">
+                <TableCell colSpan={7} className="h-32 text-center text-[11px] text-muted-foreground">
                   NO ACTIVE LEADS IN QUEUE
                 </TableCell>
               </TableRow>
             ) : (
-              leads.map((lead) => (
+              displayedLeads.map((lead) => (
                 <TableRow 
                   key={lead.id} 
                   className="border-[#262626] hover:bg-[#111111]/50 cursor-pointer transition-colors group"
@@ -164,6 +212,15 @@ export default function LeadDashboard({ leads, onLeadsChange, onLeadSelect }: Le
                   </TableCell>
                   <TableCell className="py-2">
                     <SLATimer deadline={lead.response_deadline} status={lead.status} />
+                  </TableCell>
+                  <TableCell className="py-2">
+                    {lead.sla_status === 'BREACHED' && lead.sla_breached_at ? (
+                      <span className="text-[9px] font-mono text-red-500 font-bold">
+                        {Math.floor((Date.now() - new Date(lead.sla_breached_at).getTime()) / 60000)}m ago
+                      </span>
+                    ) : (
+                      <span className="text-[9px] text-muted-foreground">—</span>
+                    )}
                   </TableCell>
                   <TableCell className="py-2">
                     <div className="flex items-center gap-2">
@@ -237,6 +294,33 @@ export default function LeadDashboard({ leads, onLeadsChange, onLeadSelect }: Le
             )}
           </TableBody>
         </Table>
+      </div>
+
+      <div className="flex items-center justify-between px-4 py-3 border-t border-[#262626] bg-[#0A0A0A]">
+        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+          Showing {filteredLeads.length === 0 ? 0 : page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filteredLeads.length)} of {filteredLeads.length}
+          {filteredLeads.length !== leads.length && ` (filtered from ${leads.length})`}
+        </span>
+        <div className="flex items-center gap-2">
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={() => setPage(p => Math.max(0, p - 1))}
+            disabled={page === 0}
+            className="h-7 w-7 p-0 bg-[#111111] border-[#262626] text-muted-foreground hover:text-[#FAFAFA]"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </Button>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+            disabled={page >= totalPages - 1}
+            className="h-7 w-7 p-0 bg-[#111111] border-[#262626] text-muted-foreground hover:text-[#FAFAFA]"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       </div>
 
       <Dialog open={!!leadToDelete} onOpenChange={(open) => !open && setLeadToDelete(null)}>

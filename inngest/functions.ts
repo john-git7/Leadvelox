@@ -45,46 +45,42 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = F
 export const slaCheck = inngest.createFunction(
   { id: "sla-check-cron", triggers: [{ cron: "* * * * *" }] },
   async ({ step }) => {
-    const supabase = await createAdminClient();
-
-    // --- Load configurable thresholds from system_settings ---
-    const { data: settings } = await supabase
-      .from('system_settings')
-      .select('escalation_thresholds, ack_suppression_minutes')
-      .eq('id', 1)
-      .single();
+    // 1. Fetch configurable thresholds
+    const settings = await step.run('fetch-settings', async () => {
+      const supabase = await createAdminClient();
+      const { data } = await supabase
+        .from('system_settings')
+        .select('escalation_thresholds, ack_suppression_minutes')
+        .eq('id', 1)
+        .single();
+      return data;
+    });
 
     const escalationThresholds: EscalationThreshold[] =
       settings?.escalation_thresholds ?? DEFAULT_ESCALATION_THRESHOLDS;
     const ackSuppressionMinutes: number = settings?.ack_suppression_minutes ?? 30;
 
-    // --- Paginated fetch: process in batches to avoid memory/timeout issues ---
-    const PAGE_SIZE = 100;
-    let page = 0;
-    let totalProcessed = 0;
-    let totalEscalated = 0;
-
-    while (true) {
-      const { data: leads, error } = await supabase
+    // 2. Fetch leads
+    const leads = await step.run('fetch-leads', async () => {
+      const supabase = await createAdminClient();
+      const { data } = await supabase
         .from('leads')
         .select('id, created_at, last_contacted_at, response_deadline, decay_status, urgency_score, escalation_level, sla_status, last_acknowledged_at')
         .in('status', ['New Lead'])
         .order('created_at', { ascending: true })
-        .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+        .limit(500);
+      return data || [];
+    });
 
-      if (error) {
-        throw new Error(`Failed to fetch SLA data (page ${page}): ${error.message}`);
-      }
+    let totalEscalated = 0;
 
-      if (!leads || leads.length === 0) break;
+    for (const lead of leads) {
+      const escalated = await step.run(`process-lead-${lead.id}`, async () => {
+        const supabase = await createAdminClient();
+        const now = Date.now();
+        const deadlineMs = lead.response_deadline ? new Date(lead.response_deadline).getTime() : now;
+        const delayMinutes = lead.response_deadline ? (now - deadlineMs) / (1000 * 60) : 0;
 
-      const now = Date.now();
-
-      for (const lead of leads) {
-        const deadlineMs = new Date(lead.response_deadline).getTime();
-        const delayMinutes = (now - deadlineMs) / (1000 * 60);
-
-        // 1. Dynamic Decay Status — uses lastContactedAt correctly now
         const newDecay = calculateDecayStatus(lead.created_at, lead.last_contacted_at);
         const newScore = calculateUrgencyScore(newDecay);
 
@@ -97,31 +93,37 @@ export const slaCheck = inngest.createFunction(
           needsUpdate = true;
         }
 
-        // 2. Determine target escalation level
+        // Only compute escalation if the deadline has actually passed.
+        // delayMinutes is negative when the deadline is still in the future.
         let targetLevel = 0;
-        for (const threshold of escalationThresholds) {
-          if (delayMinutes >= threshold.delayMinutes) {
-            targetLevel = threshold.level;
+        if (delayMinutes > 0) {
+          for (const threshold of escalationThresholds) {
+            if (delayMinutes >= threshold.delayMinutes) {
+              targetLevel = threshold.level;
+            }
           }
         }
 
-        // 3. Check acknowledgement suppression window
-        const lastAckMs = lead.last_acknowledged_at
-          ? new Date(lead.last_acknowledged_at).getTime()
-          : 0;
+        const lastAckMs = lead.last_acknowledged_at ? new Date(lead.last_acknowledged_at).getTime() : 0;
         const minutesSinceAck = (now - lastAckMs) / (1000 * 60);
         const isSuppressed = minutesSinceAck < ackSuppressionMinutes;
 
-        // 4. Only escalate if: new level is higher AND not suppressed by a recent ack
+        let didEscalate = false;
+
         if (targetLevel > lead.escalation_level && !isSuppressed) {
           const threshold = escalationThresholds.find(t => t.level === targetLevel);
 
           updateData.escalation_level = targetLevel;
           needsUpdate = true;
+          didEscalate = true;
 
-          if (lead.sla_status === 'HEALTHY') {
-            updateData.sla_status = 'BREACHED';
-            updateData.sla_breached_at = new Date().toISOString();
+          // Target level 1 is warning, target level > 1 is breached (depending on thresholds, but delayMinutes >= 0 is usually Warning)
+          if (targetLevel === 1 && lead.sla_status === 'HEALTHY') {
+             updateData.sla_status = 'WARNING';
+          } else if (targetLevel > 1 && lead.sla_status !== 'BREACHED') {
+             updateData.sla_status = 'BREACHED';
+             // Store actual deadline as breach time, not now
+             updateData.sla_breached_at = lead.response_deadline || new Date().toISOString();
           }
 
           let severity: 'INFO' | 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' = 'LOW';
@@ -130,149 +132,124 @@ export const slaCheck = inngest.createFunction(
           if (targetLevel === 4) severity = 'CRITICAL';
 
           try {
-            await logLeadEvent(
-              lead.id,
-              'SLA Escalation',
-              `Level ${targetLevel}: ${threshold?.description}`,
-              severity
-            );
-          } catch {
-            // Log failure should not block the rest of the cron
-          }
+            await logLeadEvent(lead.id, 'SLA Escalation', `Level ${targetLevel}: ${threshold?.description}`, severity);
+          } catch { /* ignore */ }
 
-          // Fire outbound webhook for levels 3 and 4
           if (targetLevel >= 3) {
-            const webhookUrl = process.env.NODE_ENV === 'production'
-              ? process.env.N8N_PROD_WEBHOOK_URL
-              : process.env.N8N_WEBHOOK_URL;
-
+            const webhookUrl = process.env.NODE_ENV === 'production' ? process.env.N8N_PROD_WEBHOOK_URL : process.env.N8N_WEBHOOK_URL;
             if (webhookUrl) {
               try {
                 await fetchWithTimeout(webhookUrl, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    event: 'sla_escalation',
-                    lead_id: lead.id,
-                    level: targetLevel,
-                    delay_minutes: Math.round(delayMinutes),
-                  }),
+                  body: JSON.stringify({ event: 'sla_escalation', lead_id: lead.id, level: targetLevel, delay_minutes: Math.round(delayMinutes) }),
                 });
-                try {
-                  await logLeadEvent(lead.id, 'System', `Escalation notification triggered for Level ${targetLevel}`, 'INFO');
-                } catch { /* ignore */ }
+                try { await logLeadEvent(lead.id, 'System', `Escalation notification triggered for Level ${targetLevel}`, 'INFO'); } catch { }
               } catch (e: unknown) {
                 const msg = e instanceof Error ? e.message : 'Unknown error';
-                try {
-                  await logLeadEvent(lead.id, 'System', `Failed to fire escalation webhook: ${msg}`, 'CRITICAL');
-                } catch { /* ignore */ }
+                try { await logLeadEvent(lead.id, 'System', `Failed to fire escalation webhook: ${msg}`, 'CRITICAL'); } catch { }
               }
             }
           }
-
-          totalEscalated++;
         }
 
         if (needsUpdate) {
-          await supabase
-            .from('leads')
-            .update(updateData)
-            .eq('id', lead.id);
+          await supabase.from('leads').update(updateData).eq('id', lead.id);
         }
-      }
 
-      totalProcessed += leads.length;
-      if (leads.length < PAGE_SIZE) break; // Last page
-      page++;
+        return didEscalate;
+      });
+
+      if (escalated) totalEscalated++;
     }
 
-    // Update heartbeat
-    await supabase
-      .from('cron_heartbeat')
-      .upsert([{ id: 1, last_heartbeat: new Date().toISOString() }]);
+    await step.run('update-heartbeat', async () => {
+      const supabase = await createAdminClient();
+      await supabase.from('cron_heartbeat').upsert([{ id: 1, last_heartbeat: new Date().toISOString() }]);
+    });
 
-    return { processed: totalProcessed, escalated: totalEscalated };
+    return { processed: leads.length, escalated: totalEscalated };
   }
 );
 
 export const retryQueue = inngest.createFunction(
   { id: "retry-queue-cron", triggers: [{ cron: "* * * * *" }] },
   async ({ step }) => {
-    const supabase = await createAdminClient();
+    const events = await step.run('fetch-retries', async () => {
+      const supabase = await createAdminClient();
+      const { data, error } = await supabase
+        .from('automation_events')
+        .select('id, lead_id, endpoint_url, payload, retry_count, created_at')
+        .eq('status', 'Retrying')
+        .lte('next_retry_at', new Date().toISOString())
+        .limit(10);
+      
+      if (error) throw new Error(`Failed to fetch retry queue: ${error.message}`);
+      return data || [];
+    });
 
-    const { data: events, error } = await supabase
-      .from('automation_events')
-      .select('id, lead_id, endpoint_url, payload, retry_count, created_at')
-      .eq('status', 'Retrying')
-      .lte('next_retry_at', new Date().toISOString())
-      .limit(10);
-
-    if (error) {
-      throw new Error(`Failed to fetch retry queue: ${error.message}`);
-    }
-
-    if (!events || events.length === 0) {
+    if (!events.length) {
       return { processed: 0 };
     }
 
     const results = [];
 
     for (const event of events) {
-      const startTime = Date.now();
-      try {
-        if (!event.endpoint_url || !event.payload) {
-          throw new Error('Missing payload or endpoint URL');
+      const res = await step.run(`retry-event-${event.id}`, async () => {
+        const supabase = await createAdminClient();
+        const startTime = Date.now();
+        try {
+          if (!event.endpoint_url || !event.payload) {
+            throw new Error('Missing payload or endpoint URL');
+          }
+
+          const res = await fetchWithTimeout(event.endpoint_url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Orchestration-ID': event.id,
+            },
+            body: JSON.stringify(event.payload),
+          });
+
+          const duration = Date.now() - startTime;
+
+          if (res.ok) {
+            await supabase
+              .from('automation_events')
+              .update({ status: 'Pending', duration_ms: duration, error_message: null })
+              .eq('id', event.id);
+
+            try { await logLeadEvent(event.lead_id, 'Workflow', `Intake orchestration queued for retry #${event.retry_count + 1}`, 'INFO'); } catch {}
+            return { id: event.id, status: 'Pending' };
+          } else {
+            throw new Error(`HTTP Error ${res.status}`);
+          }
+        } catch (err: unknown) {
+          const duration = Date.now() - startTime;
+          const errMsg = err instanceof Error ? err.message : 'Unknown error';
+          const nextCount = event.retry_count + 1;
+
+          if (nextCount >= MAX_RETRIES) {
+            await supabase
+              .from('automation_events')
+              .update({ status: 'Failed', retry_count: nextCount, duration_ms: duration, error_message: errMsg })
+              .eq('id', event.id);
+
+            try { await logLeadEvent(event.lead_id, 'Workflow', `Intake orchestration FAILED permanently after ${MAX_RETRIES} retries.`, 'CRITICAL'); } catch {}
+            return { id: event.id, status: 'Failed' };
+          } else {
+            const nextRetryAt = calculateBackoff(nextCount).toISOString();
+            await supabase
+              .from('automation_events')
+              .update({ retry_count: nextCount, duration_ms: duration, error_message: errMsg, next_retry_at: nextRetryAt })
+              .eq('id', event.id);
+
+            return { id: event.id, status: 'Retrying', attempt: nextCount };
+          }
         }
-
-        const res = await fetchWithTimeout(event.endpoint_url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Orchestration-ID': event.id,
-          },
-          body: JSON.stringify(event.payload),
-        });
-
-        const duration = Date.now() - startTime;
-
-        if (res.ok) {
-          await supabase
-            .from('automation_events')
-            .update({ status: 'Pending', duration_ms: duration, error_message: null })
-            .eq('id', event.id);
-
-          try {
-            await logLeadEvent(event.lead_id, 'Workflow', `Intake orchestration queued for retry #${event.retry_count + 1}`, 'INFO');
-          } catch { /* ignore */ }
-          results.push({ id: event.id, status: 'Pending' });
-        } else {
-          throw new Error(`HTTP Error ${res.status}`);
-        }
-      } catch (err: unknown) {
-        const duration = Date.now() - startTime;
-        const errMsg = err instanceof Error ? err.message : 'Unknown error';
-        const nextCount = event.retry_count + 1;
-
-        if (nextCount >= MAX_RETRIES) {
-          await supabase
-            .from('automation_events')
-            .update({ status: 'Failed', retry_count: nextCount, duration_ms: duration, error_message: errMsg })
-            .eq('id', event.id);
-
-          try {
-            await logLeadEvent(event.lead_id, 'Workflow', `Intake orchestration FAILED permanently after ${MAX_RETRIES} retries.`, 'CRITICAL');
-          } catch { /* ignore */ }
-          results.push({ id: event.id, status: 'Failed' });
-        } else {
-          const nextRetryAt = calculateBackoff(nextCount).toISOString();
-          await supabase
-            .from('automation_events')
-            .update({ retry_count: nextCount, duration_ms: duration, error_message: errMsg, next_retry_at: nextRetryAt })
-            .eq('id', event.id);
-
-          results.push({ id: event.id, status: 'Retrying', attempt: nextCount });
-        }
-      }
+      });
+      results.push(res);
     }
 
     return { processed: events.length, results };

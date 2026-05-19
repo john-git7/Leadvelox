@@ -12,10 +12,17 @@ async function assertAuth() {
 export async function getSystemHealthMetrics() {
   const { supabase } = await assertAuth();
 
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { error: dbProbeError } = await supabase.from('leads').select('id').limit(1);
+  const dbStatus = dbProbeError ? 'DOWN' : 'UP';
+
   // 1. Fetch Workflow Success/Failure/Retry Counts
   const { data: events } = await supabase
     .from('automation_events')
-    .select('status, duration_ms');
+    .select('status, duration_ms')
+    .gte('created_at', sevenDaysAgo)
+    .limit(1000);
 
   let successCount = 0;
   let failureCount = 0;
@@ -63,6 +70,7 @@ export async function getSystemHealthMetrics() {
     avgDurationMs: Math.round(avgDuration),
     activeBreaches: activeBreaches || 0,
     activeRetries: activeRetries || [],
-    escalationEvents: escalationEvents || []
+    escalationEvents: escalationEvents || [],
+    dbStatus
   };
 }

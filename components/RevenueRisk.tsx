@@ -5,9 +5,16 @@ import { DollarSign, TrendingDown, AlertTriangle } from 'lucide-react';
 interface RevenueRiskProps {
   atRiskCount: number;
   estimatedLoss: number;
+  avgDealValue: number;
 }
 
-export default function RevenueRisk({ atRiskCount, estimatedLoss }: RevenueRiskProps) {
+export default function RevenueRisk({ atRiskCount, estimatedLoss, avgDealValue }: RevenueRiskProps) {
+  if (estimatedLoss === 0) {
+    return null;
+  }
+
+  const dynamicCeiling = Math.max(50000, estimatedLoss * 2);
+
   return (
     <div className="bg-[#111111] border border-[#262626] rounded-lg p-6 space-y-6 shadow-2xl relative overflow-hidden">
       <div className="absolute top-0 right-0 p-4 opacity-5">
@@ -40,11 +47,11 @@ export default function RevenueRisk({ atRiskCount, estimatedLoss }: RevenueRiskP
         <div className="h-1 w-full bg-[#171717] rounded-full overflow-hidden">
           <div 
             className="h-full bg-red-500 transition-all duration-1000" 
-            style={{ width: `${Math.min((estimatedLoss / 50000) * 100, 100)}%` }} 
+            style={{ width: `${Math.min((estimatedLoss / dynamicCeiling) * 100, 100)}%` }} 
           />
         </div>
         <p className="text-[9px] text-muted-foreground font-medium uppercase tracking-tight">
-          Based on SLA breaches and lead decay velocity.
+          Based on SLA breaches and lead decay velocity. (Assumes ${avgDealValue.toLocaleString()} avg commission)
         </p>
       </div>
     </div>

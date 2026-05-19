@@ -115,7 +115,7 @@ export async function getAutomationHealth() {
 /**
  * DASHBOARD DATA FETCH — Paginated
  */
-export async function getLeads(page: number = 0, limit: number = 50) {
+export async function getLeads(page: number = 0, limit: number = 1000) {
   const { supabase } = await assertAuth();
   const { data, error } = await supabase
     .from('leads')
@@ -209,9 +209,6 @@ export async function deleteLead(id: string) {
   return { success: true };
 }
 
-/**
- * SYSTEM SETTINGS
- */
 export async function getSystemSettings() {
   const { supabase } = await assertAuth();
   const { data } = await supabase.from('system_settings').select('*').eq('id', 1).single();
@@ -226,6 +223,35 @@ export async function toggleBusinessHours(enforce: boolean) {
     .eq('id', 1);
 
   if (error) return { success: false };
+  revalidatePath('/dashboard');
+  return { success: true };
+}
+
+/**
+ * DUPLICATE MANAGEMENT
+ */
+export async function getPotentialDuplicates() {
+  const { supabase } = await assertAuth();
+  const { data } = await supabase
+    .from('leads')
+    .select('id, name, email, phone, source, created_at')
+    .eq('is_duplicate', true)
+    .in('status', ['New Lead']);
+  return data || [];
+}
+
+export async function resolveDuplicate(id: string, action: 'archive' | 'separate') {
+  const { supabase } = await assertAuth();
+  
+  if (action === 'separate') {
+    await supabase.from('leads').update({ is_duplicate: false }).eq('id', id);
+    await logLeadEvent(id, 'System', 'Manually verified as distinct unique record', 'INFO');
+  } else if (action === 'archive') {
+    const { error } = await supabase.from('leads').update({ status: 'Closed' }).eq('id', id);
+    if (error) return { success: false };
+    await logLeadEvent(id, 'System', 'Duplicate record archived by operator. Review canonical lead for complete contact history.', 'INFO');
+  }
+
   revalidatePath('/dashboard');
   return { success: true };
 }

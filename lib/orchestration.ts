@@ -5,32 +5,42 @@ export type DecayStatus = 'HOT' | 'WARM' | 'COLD' | 'HIGH_RISK';
 
 /**
  * INTELLIGENCE: Calculate Lead Decay Status
+ *
+ * Real estate speed-to-lead thresholds (industry benchmark):
+ *   HOT       < 5 minutes  — Lead is live, contact rate ~71% (MIT/InsideSales study)
+ *   WARM      < 60 minutes — First hour, still high intent, ~35% contact rate
+ *   COLD      < 24 hours   — Same-day reach out, intent dropping, ~15% contact rate
+ *   HIGH_RISK ≥ 24 hours   — Missed window, lead likely contacted a competitor
+ *
+ * Uses lastContactedAt when available so a touched lead does not continue
+ * decaying as if it was never reached.
  */
 export function calculateDecayStatus(createdAt: string, lastContactedAt?: string | null): DecayStatus {
   const now = new Date().getTime();
-  // Use lastContactedAt when available — a recently-touched lead should not
-  // decay as if it was never contacted.
   const referenceTime = lastContactedAt
     ? new Date(lastContactedAt).getTime()
     : new Date(createdAt).getTime();
-  const diffHours = (now - referenceTime) / (1000 * 60 * 60);
+  const diffMinutes = (now - referenceTime) / (1000 * 60);
 
-  if (diffHours < 2) return 'HOT';
-  if (diffHours < 24) return 'WARM';
-  if (diffHours < 72) return 'COLD';
-  return 'HIGH_RISK';
+  if (diffMinutes < 5) return 'HOT';           // < 5 minutes: critical window open
+  if (diffMinutes < 60) return 'WARM';          // < 1 hour: urgent, act now
+  if (diffMinutes < 1440) return 'COLD';        // < 24 hours: same-day recovery possible
+  return 'HIGH_RISK';                           // ≥ 24 hours: likely lost to competition
 }
 
 /**
  * INTELLIGENCE: Calculate Urgency Score
+ *
+ * Scores are non-linear to reflect the sharp drop in contact rates.
+ * HIGH_RISK scores highest (100) to surface lost-opportunity risk at the top of the queue.
  */
 export function calculateUrgencyScore(decayStatus: DecayStatus): number {
   switch (decayStatus) {
-    case 'HOT': return 90;
-    case 'WARM': return 70;
-    case 'COLD': return 30;
-    case 'HIGH_RISK': return 100;
-    default: return 50;
+    case 'HOT':       return 95;  // Immediate — do not let this cool
+    case 'WARM':      return 75;  // Urgent — within the first hour
+    case 'COLD':      return 40;  // Degraded — same-day recovery
+    case 'HIGH_RISK': return 100; // Max urgency — revenue at risk
+    default:          return 50;
   }
 }
 

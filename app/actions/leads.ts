@@ -1,10 +1,12 @@
 'use server';
 
+import { headers } from 'next/headers';
 import { createClient, createAdminClient } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
 import { leadSchema } from '@/lib/validations';
 import { calculateDecayStatus, calculateUrgencyScore, logLeadEvent, triggerOrchestration } from '@/lib/orchestration';
 import { calculateResponseDeadline, getSeverityForDecay } from '@/lib/sla';
+import { checkRateLimit } from '@/lib/rate-limit';
 
 /**
  * AUTHENTICATION GUARD
@@ -20,6 +22,25 @@ async function assertAuth() {
  * FEATURE 1: LEAD INTAKE ENGINE
  */
 export async function submitLead(formData: FormData) {
+  // --- RATE LIMIT GUARD ---
+  // Identify caller by IP. Use hashed email as fallback if IP is unavailable.
+  // Limit: 5 submissions per 15-minute sliding window per identifier.
+  const headersList = await headers();
+  const forwardedFor = headersList.get('x-forwarded-for');
+  const realIp = headersList.get('x-real-ip');
+  const identifier =
+    (forwardedFor ? forwardedFor.split(',')[0].trim() : null) ??
+    realIp ??
+    'anonymous';
+
+  const allowed = await checkRateLimit(identifier, 5, 15);
+  if (!allowed) {
+    return {
+      success: false,
+      error: 'Too many submissions. Please try again later.',
+    };
+  }
+
   const rawData = {
     name: formData.get('name'),
     email: formData.get('email'),

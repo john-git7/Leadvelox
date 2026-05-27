@@ -45,7 +45,7 @@ type DashboardLead = {
   sla_status: 'HEALTHY' | 'WARNING' | 'BREACHED';
   sla_breached_at: string | null;
   created_at: string;
-  escalation_level?: number;
+  escalation_level: number;
   last_acknowledged_at?: string | null;
   last_contacted_at?: string | null;
   assigned_agent_id?: string | null;

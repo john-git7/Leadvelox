@@ -36,9 +36,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <div className="w-5 h-5 bg-[#FAFAFA] rounded-sm flex items-center justify-center">
               <div className="w-2.5 h-2.5 bg-[#0A0A0A] rounded-full" />
             </div>
-            <span className="text-sm font-bold tracking-tighter">LEADVELOX</span>
+            <span className="text-sm font-bold tracking-tighter hidden sm:inline-block">LEADVELOX</span>
           </a>
-          <nav className="hidden md:flex items-center gap-4 text-[10px] font-bold text-muted-foreground tracking-widest uppercase">
+          <nav className="flex items-center gap-3 md:gap-4 text-[10px] font-bold text-muted-foreground tracking-widest uppercase">
             <a
               href="/dashboard/system-health"
               className="flex items-center gap-1 text-blue-500 hover:text-blue-400 transition-colors"

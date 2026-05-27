@@ -10,7 +10,7 @@ export const leadSchema = z.object({
       if (phoneNumber && phoneNumber.isValid()) {
         return phoneNumber.format('E.164');
       }
-    } catch (e) {}
+    } catch {}
     return p;
   }),
   source: z.string().min(1, "Please select a source"),

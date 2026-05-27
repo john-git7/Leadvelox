@@ -1,7 +1,8 @@
 import Link from 'next/link';
-import { AlertTriangle, Clock, Zap, ShieldCheck, Activity, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
+import { AlertTriangle, Clock, Zap, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
 
 export default function Home() {
+  const bookingUrl = process.env.NEXT_PUBLIC_BOOKING_URL ?? '#';
   return (
     <main className="min-h-screen bg-[#0A0A0A] text-[#FAFAFA]">
 
@@ -11,7 +12,7 @@ export default function Home() {
           <div className="w-5 h-5 bg-[#FAFAFA] rounded-sm flex items-center justify-center">
             <div className="w-2.5 h-2.5 bg-[#0A0A0A] rounded-full" />
           </div>
-          <span className="text-xs font-black tracking-tighter uppercase text-[#FAFAFA]">Lead Ops</span>
+          <span className="text-xs font-black tracking-tighter uppercase text-[#FAFAFA]">LeadVelox</span>
         </div>
         <div className="flex items-center gap-4">
           <Link
@@ -21,7 +22,7 @@ export default function Home() {
             Client Login
           </Link>
           <a
-            href="https://calendly.com/johnebenezerxa/30min"
+            href={bookingUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-2 px-4 py-2 bg-[#FAFAFA] text-[#0A0A0A] rounded text-[11px] font-black uppercase tracking-widest hover:bg-[#e0e0e0] transition-colors"
@@ -50,7 +51,7 @@ export default function Home() {
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
           <a
-            href="https://calendly.com/johnebenezerxa/30min"
+            href={bookingUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-2 px-8 py-4 bg-[#FAFAFA] text-[#0A0A0A] rounded text-[12px] font-black uppercase tracking-widest hover:bg-[#e0e0e0] transition-colors w-full sm:w-auto justify-center"
@@ -261,7 +262,7 @@ export default function Home() {
             15-minute demo. No slides. We show you the live system handling a real lead in real time.
           </p>
           <a
-            href="https://calendly.com/johnebenezerxa/30min"
+            href={bookingUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 px-10 py-4 bg-[#FAFAFA] text-[#0A0A0A] rounded text-[12px] font-black uppercase tracking-widest hover:bg-[#e0e0e0] transition-colors"
@@ -280,7 +281,7 @@ export default function Home() {
           <div className="w-4 h-4 bg-[#FAFAFA] rounded-sm flex items-center justify-center">
             <div className="w-2 h-2 bg-[#0A0A0A] rounded-full" />
           </div>
-          <span className="text-[10px] font-black tracking-tighter uppercase text-muted-foreground">Lead Ops Intelligence</span>
+          <span className="text-[10px] font-black tracking-tighter uppercase text-muted-foreground">LeadVelox</span>
         </div>
         <p className="text-[10px] text-muted-foreground font-mono">
           Operational infrastructure for real estate agencies

@@ -17,30 +17,48 @@ export async function getSystemHealthMetrics() {
   const { error: dbProbeError } = await supabase.from('leads').select('id').limit(1);
   const dbStatus = dbProbeError ? 'DOWN' : 'UP';
 
-  // 1. Fetch Workflow Success/Failure/Retry Counts
+  // 1. Fetch Workflow Event Counts + Duration Data
   const { data: events } = await supabase
     .from('automation_events')
-    .select('status, duration_ms')
+    .select('status, created_at, duration_ms')
     .gte('created_at', sevenDaysAgo)
     .limit(1000);
 
   let successCount = 0;
   let failureCount = 0;
   let retryCount = 0;
-  let totalDuration = 0;
+  let pendingCount = 0;
+  let stuckPendingCount = 0;
+  let totalDurationMs = 0;
+  let durationSampleCount = 0;
+  const stuckPendingCutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
 
   if (events) {
     events.forEach(e => {
-      if (e.status === 'Success') successCount++;
+      if (e.status === 'Success') {
+        successCount++;
+        // Accumulate real duration for successful events that have timing data
+        if (typeof e.duration_ms === 'number' && e.duration_ms > 0) {
+          totalDurationMs += e.duration_ms;
+          durationSampleCount++;
+        }
+      }
       if (e.status === 'Failed') failureCount++;
       if (e.status === 'Retrying') retryCount++;
-      if (e.duration_ms) totalDuration += e.duration_ms;
+      if (e.status === 'Pending') pendingCount++;
+      if (e.status === 'Pending' && 'created_at' in e && e.created_at < stuckPendingCutoff) {
+        stuckPendingCount++;
+      }
     });
   }
 
   const totalCompleted = successCount + failureCount;
-  const successRatio = totalCompleted > 0 ? (successCount / totalCompleted) * 100 : 100;
-  const avgDuration = totalCompleted > 0 ? totalDuration / totalCompleted : 0;
+  const successRatio = totalCompleted > 0 ? (successCount / totalCompleted) * 100 : '—';
+
+  // Compute real average duration from sampled successful events; null when no timing data
+  const avgDuration = durationSampleCount > 0
+    ? Math.round(totalDurationMs / durationSampleCount)
+    : 0;
 
   // 2. Fetch SLA Breaches
   const { count: activeBreaches } = await supabase
@@ -64,13 +82,16 @@ export async function getSystemHealthMetrics() {
     .limit(20);
 
   return {
-    successRatio: successRatio.toFixed(1),
+    successRatio: typeof successRatio === 'number' ? successRatio.toFixed(1) : successRatio,
     failureCount,
     retryCount,
-    avgDurationMs: Math.round(avgDuration),
+    pendingCount,
+    stuckPendingCount,
+    avgDurationMs: avgDuration,
     activeBreaches: activeBreaches || 0,
     activeRetries: activeRetries || [],
     escalationEvents: escalationEvents || [],
     dbStatus
   };
 }
+

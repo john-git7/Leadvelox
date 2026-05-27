@@ -1,7 +1,14 @@
-import { createClient, createAdminClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
 import { EventSeverity } from './sla';
 
 export type DecayStatus = 'HOT' | 'WARM' | 'COLD' | 'HIGH_RISK';
+
+type LeadWebhookPayload = {
+  id?: string;
+  created_at?: string;
+  response_deadline?: string | null;
+  [key: string]: unknown;
+};
 
 /**
  * INTELLIGENCE: Calculate Lead Decay Status
@@ -79,7 +86,7 @@ export async function logAutomationEvent(
   status: string, 
   durationMs?: number,
   error?: string,
-  payload?: any,
+  payload?: Record<string, unknown>,
   endpointUrl?: string,
   nextRetryAt?: string
 ) {
@@ -105,7 +112,7 @@ export async function logAutomationEvent(
  * ORCHESTRATION: Trigger Automation Webhook
  * Environment-aware, retry-safe logic.
  */
-export async function triggerOrchestration(leadId: string, leadData: any) {
+export async function triggerOrchestration(leadId: string, leadData: LeadWebhookPayload) {
   const webhookUrl = process.env.NODE_ENV === 'production' 
     ? process.env.N8N_PROD_WEBHOOK_URL 
     : process.env.N8N_WEBHOOK_URL;
@@ -133,7 +140,15 @@ export async function triggerOrchestration(leadId: string, leadData: any) {
   }
 
   const orchestration_id = event.id;
-  const payloadWithIdempotency = { ...leadData, orchestration_id: orchestration_id };
+  const payloadWithIdempotency = {
+    event: 'lead_intake',
+    notification_type: 'new_lead',
+    lead_id: leadId,
+    submitted_at: leadData.created_at,
+    response_deadline: leadData.response_deadline,
+    ...leadData,
+    orchestration_id,
+  };
 
   try {
     const controller = new AbortController();
@@ -156,8 +171,7 @@ export async function triggerOrchestration(leadId: string, leadData: any) {
     if (res.ok) {
       // 2. We only log that it was submitted. The n8n callback will mark it 'Success'.
       await supabase.from('automation_events').update({
-        payload: payloadWithIdempotency,
-        duration_ms: duration
+        payload: payloadWithIdempotency
       }).eq('id', orchestration_id);
       
       await logLeadEvent(leadId, 'Workflow', 'Intake orchestration submitted successfully (Pending)', 'INFO');
@@ -166,7 +180,6 @@ export async function triggerOrchestration(leadId: string, leadData: any) {
       const nextRetryAt = new Date(Date.now() + 30 * 1000).toISOString();
       await supabase.from('automation_events').update({
         status: 'Retrying',
-        duration_ms: duration,
         error_message: `HTTP Error ${res.status}`,
         payload: payloadWithIdempotency,
         next_retry_at: nextRetryAt
@@ -174,18 +187,18 @@ export async function triggerOrchestration(leadId: string, leadData: any) {
       
       await logLeadEvent(leadId, 'Workflow', `Intake orchestration submission failed: ${res.status}. Queued for retry.`, 'HIGH');
     }
-  } catch (err: any) {
+  } catch (err: unknown) {
     const duration = Date.now() - startTime;
     const nextRetryAt = new Date(Date.now() + 30 * 1000).toISOString();
+    const errMsg = err instanceof Error ? err.message : 'Unknown error';
     
     await supabase.from('automation_events').update({
       status: 'Retrying',
-      duration_ms: duration,
-      error_message: err.message,
+      error_message: errMsg,
       payload: payloadWithIdempotency,
       next_retry_at: nextRetryAt
     }).eq('id', orchestration_id);
 
-    await logLeadEvent(leadId, 'Workflow', `Intake orchestration error: ${err.message}. Queued for retry.`, 'CRITICAL');
+    await logLeadEvent(leadId, 'Workflow', `Intake orchestration error: ${errMsg}. Queued for retry.`, 'CRITICAL');
   }
 }

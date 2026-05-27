@@ -1,12 +1,12 @@
 import { serve } from "inngest/next";
 import { inngest } from "../../../inngest/client";
-import { slaCheck, retryQueue } from "../../../inngest/functions";
+import { retryQueue } from "../../../inngest/functions";
 
-// Create an API that serves zero-downtime background jobs
+// Create an API that serves the retry-queue background job.
+// SLA escalation is handled exclusively by the Vercel HTTP cron at /api/cron/sla.
 export const { GET, POST, PUT } = serve({
   client: inngest,
   functions: [
-    slaCheck,
     retryQueue,
   ],
 });

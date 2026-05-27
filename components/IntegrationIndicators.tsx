@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, AlertTriangle, XCircle, HelpCircle, Database, Zap, RefreshCw, Activity } from 'lucide-react';
 import { getIntegrationHealth, IntegrationHealth, IntegrationStatus } from '@/app/actions/integrations';
+import { InfoTooltip } from '@/components/ui/info-tooltip';
 
 const REFRESH_INTERVAL_MS = 30_000;
 
@@ -55,7 +56,7 @@ export default function IntegrationIndicators() {
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     setIsLoading(true);
     try {
       const data = await getIntegrationHealth();
@@ -66,13 +67,15 @@ export default function IntegrationIndicators() {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    refresh();
+    queueMicrotask(() => {
+      void refresh();
+    });
     const interval = setInterval(refresh, REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, []);
+  }, [refresh]);
 
   const overall = health ? overallStatus(health) : 'unknown';
 
@@ -87,9 +90,14 @@ export default function IntegrationIndicators() {
 
   return (
     <div className="bg-[#111111] border border-[#262626] rounded-lg p-4 space-y-4 shadow-xl">
-      <div className="flex items-center justify-between">
-        <h3 className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Ecosystem Status</h3>
-        <div className="flex items-center gap-1.5">
+      <div className="flex items-start justify-between">
+        <div className="flex flex-col gap-1">
+          <h3 className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest flex items-center">
+            Ecosystem Status
+            <InfoTooltip content="Live health checks of the infrastructure powering your automations." />
+          </h3>
+        </div>
+        <div className="flex items-center gap-1.5 mt-0.5">
           <div className={`w-1.5 h-1.5 rounded-full ${statusDotClass(overall)}`} />
           <span className="text-[8px] font-mono text-muted-foreground">{overallLabel(overall)}</span>
         </div>

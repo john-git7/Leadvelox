@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { createAdminClient } from '@/lib/supabase/server';
-import { AlertTriangle, ArrowRight, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight } from 'lucide-react';
+import { SLABreachesModal } from './SLABreachesModal';
 
 /**
  * SLABreachBanner
@@ -36,7 +37,7 @@ export default async function SLABreachBanner() {
 
     if (oldestRes.data?.sla_breached_at) {
       oldestBreachMinutes = Math.round(
-        (Date.now() - new Date(oldestRes.data.sla_breached_at).getTime()) / (1000 * 60)
+        (new Date().getTime() - new Date(oldestRes.data.sla_breached_at).getTime()) / (1000 * 60)
       );
     }
   } catch {
@@ -85,23 +86,17 @@ export default async function SLABreachBanner() {
 
         <p className={`text-[11px] font-bold uppercase tracking-widest ${textClass} truncate`}>
           {breachCount === 1
-            ? `1 ACTIVE SLA BREACH`
-            : `${breachCount} ACTIVE SLA BREACHES`}
+            ? `1 ACTIVE FIRST-RESPONSE SLA BREACH`
+            : `${breachCount} ACTIVE FIRST-RESPONSE SLA BREACHES`}
           {oldestBreachMinutes > 0 && (
             <span className="font-normal text-[10px] ml-2 opacity-70 tracking-wide normal-case">
-              — oldest breach {ageLabel} overdue
+              - oldest first response {ageLabel} overdue
             </span>
           )}
         </p>
       </div>
 
-      <Link
-        href="/dashboard/system-health"
-        className={`flex items-center gap-1.5 shrink-0 text-[10px] font-bold uppercase tracking-widest ${textClass} hover:opacity-80 transition-opacity`}
-      >
-        View System Health
-        <ArrowRight className="w-3 h-3" />
-      </Link>
+      <SLABreachesModal textClass={textClass} />
     </div>
   );
 }

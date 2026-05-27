@@ -11,9 +11,15 @@ function calculateBackoff(retryCount: number): Date {
 }
 
 export async function GET(req: Request) {
-  // 1. Optional: Add authorization header check here for Vercel Cron.
-  // const authHeader = req.headers.get('authorization');
-  // if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret) {
+    const auth = req.headers.get('authorization');
+    if (auth !== `Bearer ${cronSecret}`) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+  } else if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({ error: 'Server Configuration Error' }, { status: 500 });
+  }
 
   const supabase = await createAdminClient();
 
@@ -43,33 +49,37 @@ export async function GET(req: Request) {
 
       const res = await fetch(event.endpoint_url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Orchestration-ID': event.id,
+        },
         body: JSON.stringify(event.payload),
       });
 
       const duration = Date.now() - startTime;
 
       if (res.ok) {
-        // Success
+        // n8n accepted the retry. The completion callback will mark final Success.
         await supabase
           .from('automation_events')
-          .update({ status: 'Success', duration_ms: duration, error_message: null })
+          .update({ status: 'Pending', duration_ms: duration, error_message: null })
           .eq('id', event.id);
 
-        await logLeadEvent(event.lead_id, 'Workflow', `Intake orchestration recovered successfully on retry #${event.retry_count + 1}`, 'INFO');
-        results.push({ id: event.id, status: 'Success' });
+        await logLeadEvent(event.lead_id, 'Workflow', `Intake orchestration resubmitted on retry #${event.retry_count + 1}. Awaiting n8n callback.`, 'INFO');
+        results.push({ id: event.id, status: 'Pending' });
       } else {
         throw new Error(`HTTP Error ${res.status}`);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       const duration = Date.now() - startTime;
       const nextCount = event.retry_count + 1;
+      const errMsg = err instanceof Error ? err.message : 'Unknown error';
 
       if (nextCount >= MAX_RETRIES) {
         // Max Retries Exceeded -> Fail completely
         await supabase
           .from('automation_events')
-          .update({ status: 'Failed', retry_count: nextCount, duration_ms: duration, error_message: err.message })
+          .update({ status: 'Failed', retry_count: nextCount, duration_ms: duration, error_message: errMsg })
           .eq('id', event.id);
 
         await logLeadEvent(event.lead_id, 'Workflow', `Intake orchestration FAILED permanently after ${MAX_RETRIES} retries.`, 'CRITICAL');
@@ -79,7 +89,7 @@ export async function GET(req: Request) {
         const nextRetryAt = calculateBackoff(nextCount).toISOString();
         await supabase
           .from('automation_events')
-          .update({ retry_count: nextCount, duration_ms: duration, error_message: err.message, next_retry_at: nextRetryAt })
+          .update({ retry_count: nextCount, duration_ms: duration, error_message: errMsg, next_retry_at: nextRetryAt })
           .eq('id', event.id);
 
         results.push({ id: event.id, status: 'Retrying', attempt: nextCount });

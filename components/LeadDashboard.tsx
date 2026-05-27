@@ -1,16 +1,17 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { updateLeadStatus, deleteLead, acknowledgeAlert } from '@/app/actions/leads';
+import { updateLeadStatus, deleteLead, acknowledgeAlert, assignLead, requestLeadDeletion, bulkDeleteLeads } from '@/app/actions/leads';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { MoreVertical, Trash, AlertCircle, TrendingDown, Zap, ShieldAlert, Clock, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { MoreVertical, Trash, AlertCircle, Zap, ShieldAlert, Clock, AlertTriangle, ChevronLeft, ChevronRight, UserRound, UserCheck } from 'lucide-react';
 import { DecayStatus } from '@/lib/orchestration';
 import { SLAStatus } from '@/lib/sla';
+import type { Agent } from './CommandCenter';
 
 type Lead = {
   id: string;
@@ -22,19 +23,40 @@ type Lead = {
   urgency_score: number;
   decay_status: DecayStatus;
   is_duplicate: boolean;
+  duplicate_reason?: string;
   response_deadline: string | null;
   sla_status: SLAStatus;
   sla_breached_at: string | null;
   created_at: string;
+  last_contacted_at?: string | null;
   assigned_agent_id?: string | null;
+  escalation_level: number;
+  delete_requested?: boolean;
 };
 
 interface LeadDashboardProps {
+  // Data
   leads: Lead[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  search: string;
+  statusFilter: string;
+  startDate?: string;
+  endDate?: string;
+  agents: Agent[];
+  currentUserRole?: 'ADMIN' | 'MANAGER' | 'AGENT';
+  // Callbacks — all filtering/pagination is server-driven
   onLeadsChange: (leads: Lead[]) => void;
   onLeadSelect?: (lead: Lead) => void;
+  selectedLeadId?: string;
+  onSearchChange: (search: string) => void;
+  onStatusFilterChange: (status: string) => void;
+  onDateFilterChange?: (start: string, end: string) => void;
+  onPageChange: (page: number) => void;
 }
 
+// ─── SLA countdown timer ──────────────────────────────────────────────────────
 export function SLATimer({ deadline, status }: { deadline: string | null, status: string }) {
   const [timeLeft, setTimeLeft] = useState<string>('');
   const [isBreached, setIsBreached] = useState(false);
@@ -51,9 +73,15 @@ export function SLATimer({ deadline, status }: { deadline: string | null, status
         setTimeLeft('SLA BREACHED');
         setIsBreached(true);
       } else {
-        const minutes = Math.floor(diff / (1000 * 60));
-        const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-        setTimeLeft(`${minutes}:${seconds.toString().padStart(2, '0')}`);
+        const h = Math.floor(diff / (1000 * 60 * 60));
+        const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        const s = Math.floor((diff % (1000 * 60)) / 1000);
+
+        if (h > 0) {
+          setTimeLeft(`${h}h ${m}m`);
+        } else {
+          setTimeLeft(`${m}:${s.toString().padStart(2, '0')}`);
+        }
         setIsBreached(false);
       }
     };
@@ -73,47 +101,140 @@ export function SLATimer({ deadline, status }: { deadline: string | null, status
   );
 }
 
-export default function LeadDashboard({ leads, onLeadsChange, onLeadSelect }: LeadDashboardProps) {
+// ─── Breach age counter ───────────────────────────────────────────────────────
+function BreachAge({ breachedAt }: { breachedAt: string }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const diffMinutes = Math.max(0, Math.floor((now - new Date(breachedAt).getTime()) / 60000));
+  const label = diffMinutes >= 60
+    ? `${Math.floor(diffMinutes / 60)}h ${diffMinutes % 60}m overdue`
+    : `${diffMinutes}m overdue`;
+
+  return (
+    <span
+      title="Total time this lead has been ignored since their SLA deadline expired"
+      className="text-[9px] font-mono text-red-500 font-bold"
+    >
+      {label}
+    </span>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+export default function LeadDashboard({
+  leads,
+  totalCount,
+  page,
+  pageSize,
+  search,
+  statusFilter,
+  startDate,
+  endDate,
+  agents,
+  onLeadsChange,
+  onLeadSelect,
+  selectedLeadId,
+  onSearchChange,
+  onStatusFilterChange,
+  onDateFilterChange,
+  onPageChange,
+  currentUserRole = 'AGENT',
+}: LeadDashboardProps) {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [leadToDelete, setLeadToDelete] = useState<Lead | null>(null);
-  const [page, setPage] = useState(0);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('All');
-  const PAGE_SIZE = 10;
+  const [statusChange, setStatusChange] = useState<{ id: string, newStatus: string, currentStatus: string } | null>(null);
+  const [outcomeNote, setOutcomeNote] = useState('');
+  const [assigningId, setAssigningId] = useState<string | null>(null);
+  const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
-  const filteredLeads = leads.filter(lead => {
-    const matchesSearch = !searchQuery ||
-      lead.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      lead.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      lead.phone.includes(searchQuery);
-    const matchesStatus = statusFilter === 'All' || lead.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const from = totalCount === 0 ? 0 : page * pageSize + 1;
+  const to = Math.min((page + 1) * pageSize, totalCount);
 
-  const totalPages = Math.max(1, Math.ceil(filteredLeads.length / PAGE_SIZE));
-  const displayedLeads = filteredLeads.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  // Build agent lookup map for display
+  const agentMap = new Map(agents.map(a => [a.id, a]));
 
-  const handleStatusChange = async (id: string, newStatus: string) => {
+  const handleStatusChange = async (id: string, newStatus: string, note?: string) => {
     setUpdatingId(id);
-    const result = await updateLeadStatus(id, newStatus);
+    const result = await updateLeadStatus(id, newStatus, note);
     if (result.success) {
       toast.success('Status synchronized');
-      onLeadsChange(leads.map(lead => lead.id === id ? { ...lead, status: newStatus } : lead));
+      const contactedAt = newStatus === 'New Lead' ? null : new Date().toISOString();
+      onLeadsChange(leads.map(lead => lead.id === id ? {
+        ...lead,
+        status: newStatus,
+        last_contacted_at: contactedAt,
+        sla_status: newStatus === 'New Lead' ? lead.sla_status : 'HEALTHY',
+        sla_breached_at: newStatus === 'New Lead' ? lead.sla_breached_at : null,
+      } : lead));
     } else {
-      toast.error('Failed to update status');
+      toast.error(result.error || 'Failed to update status');
     }
     setUpdatingId(null);
   };
 
+  const handleSelectChange = (lead: Lead, newStatus: string) => {
+    if (lead.status === 'New Lead' && newStatus !== 'New Lead') {
+      setStatusChange({ id: lead.id, newStatus, currentStatus: lead.status });
+      setOutcomeNote('');
+    } else {
+      handleStatusChange(lead.id, newStatus);
+    }
+  };
+
+  const toggleLeadSelection = (id: string) => {
+    const next = new Set(selectedLeadIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedLeadIds(next);
+  };
+
+  const toggleAllSelection = () => {
+    if (selectedLeadIds.size === leads.length && leads.length > 0) {
+      setSelectedLeadIds(new Set());
+    } else {
+      setSelectedLeadIds(new Set(leads.map(l => l.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedLeadIds.size === 0) return;
+    setIsBulkDeleting(true);
+    const result = await bulkDeleteLeads(Array.from(selectedLeadIds));
+    if (result.success) {
+      toast.success(`Deleted ${selectedLeadIds.size} leads.`);
+      onLeadsChange(leads.filter(l => !selectedLeadIds.has(l.id)));
+      setSelectedLeadIds(new Set());
+    } else {
+      toast.error(result.error || 'Bulk delete failed');
+    }
+    setIsBulkDeleting(false);
+  };
+
+  const handleRequestDeletion = async (id: string) => {
+    const result = await requestLeadDeletion(id);
+    if (result.success) {
+      toast.success('Deletion request sent to managers.');
+      onLeadsChange(leads.map(l => l.id === id ? { ...l, delete_requested: true } : l));
+    } else {
+      toast.error(result.error || 'Request failed');
+    }
+  };
+
   const confirmDelete = async () => {
     if (!leadToDelete) return;
-    
     const result = await deleteLead(leadToDelete.id);
     if (result.success) {
-      toast.success('Lead record terminated');
+      toast.success('Lead record deleted');
       onLeadsChange(leads.filter(lead => lead.id !== leadToDelete.id));
     } else {
-      toast.error('Termination failed');
+      toast.error(result.error || 'Delete failed');
     }
     setLeadToDelete(null);
   };
@@ -128,6 +249,19 @@ export default function LeadDashboard({ leads, onLeadsChange, onLeadSelect }: Le
     }
   };
 
+  const handleAssign = async (leadId: string, agentId: string | null) => {
+    setAssigningId(leadId);
+    const result = await assignLead(leadId, agentId);
+    if (result.success) {
+      const agentEmail = agentId ? (agentMap.get(agentId)?.email ?? agentId.slice(0, 8)) : 'nobody';
+      toast.success(agentId ? `Assigned to ${agentEmail}` : 'Lead unassigned');
+      onLeadsChange(leads.map(l => l.id === leadId ? { ...l, assigned_agent_id: agentId } : l));
+    } else {
+      toast.error('Assignment failed');
+    }
+    setAssigningId(null);
+  };
+
   const getDecayColor = (status: DecayStatus) => {
     switch (status) {
       case 'HOT': return 'text-orange-500 bg-orange-500/10 border-orange-500/20';
@@ -139,19 +273,19 @@ export default function LeadDashboard({ leads, onLeadsChange, onLeadSelect }: Le
   };
 
   return (
-    <div className="bg-[#0A0A0A] border border-[#262626] rounded-md overflow-hidden">
-      {/* Search + Filter Bar */}
-      <div className="flex flex-col sm:flex-row gap-2 p-3 border-b border-[#262626] bg-[#0A0A0A]">
+    <div className="bg-[#0A0A0A] border border-[#262626] rounded-md overflow-hidden flex flex-col h-full">
+      {/* ── Search + Filter Bar ───────────────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row gap-2 p-3 border-b border-[#262626] bg-[#0A0A0A] shrink-0">
         <input
           type="text"
-          placeholder="Search name, email, phone..."
-          value={searchQuery}
-          onChange={e => { setSearchQuery(e.target.value); setPage(0); }}
+          placeholder="Search name, email, phone…"
+          value={search}
+          onChange={e => onSearchChange(e.target.value)}
           className="flex-1 px-3 py-1.5 bg-[#111111] border border-[#262626] rounded text-[11px] text-[#FAFAFA] placeholder:text-muted-foreground focus:outline-none focus:border-[#404040] font-mono"
         />
         <select
           value={statusFilter}
-          onChange={e => { setStatusFilter(e.target.value); setPage(0); }}
+          onChange={e => onStatusFilterChange(e.target.value)}
           className="px-3 py-1.5 bg-[#111111] border border-[#262626] rounded text-[10px] text-[#FAFAFA] font-bold uppercase focus:outline-none focus:border-[#404040]"
         >
           <option value="All">ALL STATUS</option>
@@ -160,21 +294,79 @@ export default function LeadDashboard({ leads, onLeadsChange, onLeadSelect }: Le
           <option value="Qualified">QUALIFIED</option>
           <option value="Lost">LOST</option>
           <option value="Closed">CLOSED</option>
+          <option value="Delete Requested">DELETE REQUESTED</option>
         </select>
-        {(searchQuery || statusFilter !== 'All') && (
+        <input
+          type="date"
+          value={startDate || ''}
+          onChange={e => onDateFilterChange?.(e.target.value, endDate || '')}
+          className="px-2 py-1.5 bg-[#111111] border border-[#262626] rounded text-[10px] text-muted-foreground focus:outline-none focus:border-[#404040]"
+        />
+        <span className="text-muted-foreground text-[10px] flex items-center shrink-0">to</span>
+        <input
+          type="date"
+          value={endDate || ''}
+          onChange={e => onDateFilterChange?.(startDate || '', e.target.value)}
+          className="px-2 py-1.5 bg-[#111111] border border-[#262626] rounded text-[10px] text-muted-foreground focus:outline-none focus:border-[#404040]"
+        />
+        {(search || statusFilter !== 'All' || startDate || endDate) && (
           <button
-            onClick={() => { setSearchQuery(''); setStatusFilter('All'); setPage(0); }}
-            className="px-3 py-1.5 bg-[#111111] border border-[#262626] rounded text-[10px] text-muted-foreground hover:text-[#FAFAFA] font-bold uppercase transition-colors"
+            onClick={() => { onSearchChange(''); onStatusFilterChange('All'); onDateFilterChange?.('', ''); }}
+            className="px-3 py-1.5 bg-[#111111] border border-[#262626] rounded text-[10px] text-muted-foreground hover:text-[#FAFAFA] font-bold uppercase transition-colors shrink-0"
           >
             Clear
           </button>
         )}
+        <div className="ml-auto hidden sm:flex items-center text-[9px] font-mono text-zinc-500 bg-[#111111] border border-[#262626] rounded px-2 py-1 shrink-0">
+          SORT: URGENCY ↓ · NEWEST ↓
+        </div>
       </div>
-      <div className="overflow-x-auto">
+
+      {/* ── Bulk Actions Bar ─────────────────────────────────────────────── */}
+      {selectedLeadIds.size > 0 && (
+        <div className="flex items-center justify-between p-2 bg-[#1a1a1a] border-b border-[#262626] shrink-0">
+          <span className="text-[11px] font-bold text-[#FAFAFA] px-2">{selectedLeadIds.size} selected</span>
+          {currentUserRole === 'AGENT' ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                selectedLeadIds.forEach(id => handleRequestDeletion(id));
+                setSelectedLeadIds(new Set());
+              }}
+              className="h-7 text-[10px] uppercase tracking-wider bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/20 hover:text-red-400"
+            >
+              Request Deletion for Selected
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleBulkDelete}
+              disabled={isBulkDeleting}
+              className="h-7 text-[10px] uppercase tracking-wider bg-red-950/80 text-red-400 border-red-500 hover:bg-red-900"
+            >
+              {isBulkDeleting ? 'Deleting...' : 'Delete Selected'}
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* ── Lead Table ───────────────────────────────────────────────────── */}
+      <div className="flex-1 overflow-auto">
         <Table>
           <TableHeader className="bg-[#111111]">
             <TableRow className="border-[#262626] hover:bg-transparent">
+              <TableHead className="w-10 text-center py-2">
+                <input
+                  type="checkbox"
+                  checked={leads.length > 0 && selectedLeadIds.size === leads.length}
+                  onChange={toggleAllSelection}
+                  className="accent-red-500 cursor-pointer"
+                />
+              </TableHead>
               <TableHead className="text-[10px] uppercase font-bold text-muted-foreground py-2">Lead / Intelligence</TableHead>
+              <TableHead className="text-[10px] uppercase font-bold text-muted-foreground py-2">Assigned</TableHead>
               <TableHead className="text-[10px] uppercase font-bold text-muted-foreground py-2">SLA Status</TableHead>
               <TableHead className="text-[10px] uppercase font-bold text-muted-foreground py-2">Breach Time</TableHead>
               <TableHead className="text-[10px] uppercase font-bold text-muted-foreground py-2">Score</TableHead>
@@ -184,137 +376,244 @@ export default function LeadDashboard({ leads, onLeadsChange, onLeadSelect }: Le
             </TableRow>
           </TableHeader>
           <TableBody>
-            {displayedLeads.length === 0 ? (
+            {leads.length === 0 ? (
               <TableRow className="border-[#262626]">
-                <TableCell colSpan={7} className="h-32 text-center text-[11px] text-muted-foreground">
-                  NO ACTIVE LEADS IN QUEUE
+                <TableCell colSpan={8} className="h-32 text-center text-[11px] text-muted-foreground">
+                  {search || statusFilter !== 'All' ? 'NO LEADS MATCH YOUR FILTERS' : 'NO ACTIVE LEADS IN QUEUE'}
                 </TableCell>
               </TableRow>
             ) : (
-              displayedLeads.map((lead) => (
-                <TableRow 
-                  key={lead.id} 
-                  className="border-[#262626] hover:bg-[#111111]/50 cursor-pointer transition-colors group"
-                  onClick={() => onLeadSelect?.(lead)}
-                >
-                  <TableCell className="py-2">
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[13px] font-semibold text-[#FAFAFA]">{lead.name}</span>
-                        {lead.is_duplicate && (
-                          <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-500/10 border border-red-500/20 text-[9px] font-bold text-red-500 uppercase">
-                            <ShieldAlert className="w-2.5 h-2.5" /> Duplicate
+              leads.map((lead) => {
+                const assignedAgent = lead.assigned_agent_id ? agentMap.get(lead.assigned_agent_id) : null;
+                return (
+                  <TableRow
+                    key={lead.id}
+                    className={`border-[#262626] cursor-pointer transition-colors group ${lead.id === selectedLeadId ? 'bg-[#1a1a1a]' : ''} ${lead.sla_status === 'BREACHED' ? 'bg-red-950/20 hover:bg-red-900/30' : 'hover:bg-[#111111]/50'}`}
+                    onClick={() => onLeadSelect?.(lead)}
+                  >
+                    {/* Checkbox */}
+                    <TableCell className="w-10 text-center py-2" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedLeadIds.has(lead.id)}
+                        onChange={() => toggleLeadSelection(lead.id)}
+                        className="accent-red-500 cursor-pointer"
+                      />
+                    </TableCell>
+
+                    {/* Lead / Intelligence */}
+                    <TableCell className="py-2">
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[13px] font-semibold text-[#FAFAFA] truncate max-w-[150px]">{lead.name}</span>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded border border-[#262626] bg-[#1A1A1A] text-muted-foreground uppercase font-bold tracking-wider shrink-0">{lead.source}</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                          <span className="text-[10px] text-muted-foreground font-mono truncate">{lead.email}</span>
+                          {lead.is_duplicate && (
+                            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-500/10 border border-red-500/20 text-[9px] font-bold text-red-500 uppercase whitespace-nowrap shrink-0">
+                              <ShieldAlert className="w-2.5 h-2.5 shrink-0" /> Duplicate {lead.duplicate_reason ? `(${lead.duplicate_reason})` : ''}
+                            </div>
+                          )}
+                          {lead.delete_requested && (
+                            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-orange-500/10 border border-orange-500/20 text-[9px] font-bold text-orange-500 uppercase whitespace-nowrap shrink-0">
+                              <AlertCircle className="w-2.5 h-2.5 shrink-0" /> Delete Requested
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </TableCell>
+
+                    {/* Assigned Agent */}
+                    <TableCell className="py-2" onClick={e => e.stopPropagation()}>
+                      {agents.length === 0 ? (
+                        <span className="text-[9px] text-zinc-600">—</span>
+                      ) : (
+                        <Select
+                          value={lead.assigned_agent_id ?? '__none__'}
+                          onValueChange={val => handleAssign(lead.id, val === '__none__' ? null : val)}
+                          disabled={assigningId === lead.id}
+                        >
+                          <SelectTrigger className="h-6 w-[110px] bg-transparent border-[#262626] text-[9px] font-bold text-muted-foreground hover:text-[#FAFAFA]">
+                            <div className="flex items-center gap-1.5 truncate">
+                              {assignedAgent
+                                ? <><UserCheck className="w-2.5 h-2.5 text-green-500 shrink-0" /><span className="truncate">{assignedAgent.email.split('@')[0]}</span></>
+                                : <><UserRound className="w-2.5 h-2.5 text-zinc-600 shrink-0" /><span className="text-zinc-600">Unassigned</span></>
+                              }
+                            </div>
+                          </SelectTrigger>
+                          <SelectContent className="bg-[#0A0A0A] border-[#262626] text-[#FAFAFA]">
+                            <SelectItem value="__none__" className="text-[10px] text-zinc-500">
+                              Unassigned
+                            </SelectItem>
+                            {agents.map(agent => (
+                              <SelectItem key={agent.id} value={agent.id} className="text-[10px] font-medium">
+                                <div className="flex flex-col">
+                                  <span>{agent.email}</span>
+                                  <span className="text-[9px] text-zinc-500 uppercase">{agent.role}</span>
+                                </div>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </TableCell>
+
+                    {/* SLA Status */}
+                    <TableCell className="py-2">
+                      <div className="flex flex-col gap-1 items-start">
+                        <SLATimer deadline={lead.response_deadline} status={lead.status} />
+                        {(lead.escalation_level ?? 0) > 0 && lead.status === 'New Lead' && (
+                          <div
+                            title={
+                              lead.escalation_level === 1 ? 'SLA Warning - 5 minute initial response deadline missed.' :
+                              lead.escalation_level === 2 ? 'Priority Alert - Dashboard visibility escalated.' :
+                              lead.escalation_level === 3 ? 'Manager Webhook - Slack/Email notification triggered to management.' :
+                              'Critical Alert - 60+ minutes overdue. Escalation webhook re-fired.'
+                            }
+                            className={`inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider whitespace-nowrap
+                            ${lead.escalation_level === 1 ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20' : ''}
+                            ${lead.escalation_level === 2 ? 'bg-orange-500/10 text-orange-500 border border-orange-500/20' : ''}
+                            ${lead.escalation_level === 3 ? 'bg-red-500/10 text-red-500 border border-red-500/20' : ''}
+                            ${(lead.escalation_level ?? 0) >= 4 ? 'bg-red-950/80 text-red-400 border border-red-500 animate-pulse' : ''}
+                          `}
+                          >
+                            {lead.escalation_level === 1 && 'Lvl 1: Warning'}
+                            {lead.escalation_level === 2 && 'Lvl 2: Priority'}
+                            {lead.escalation_level === 3 && 'Lvl 3: Webhook'}
+                            {(lead.escalation_level ?? 0) >= 4 && 'Lvl 4: Critical'}
                           </div>
                         )}
                       </div>
-                      <span className="text-[10px] text-muted-foreground font-mono">{lead.source}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="py-2">
-                    <SLATimer deadline={lead.response_deadline} status={lead.status} />
-                  </TableCell>
-                  <TableCell className="py-2">
-                    {lead.sla_status === 'BREACHED' && lead.sla_breached_at ? (
-                      <span className="text-[9px] font-mono text-red-500 font-bold">
-                        {Math.floor((Date.now() - new Date(lead.sla_breached_at).getTime()) / 60000)}m ago
-                      </span>
-                    ) : (
-                      <span className="text-[9px] text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="py-2">
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 h-1 w-10 bg-[#171717] rounded-full overflow-hidden border border-[#262626]">
-                        <div 
-                          className={`h-full transition-all ${lead.urgency_score > 70 ? 'bg-orange-500' : 'bg-blue-500'}`} 
-                          style={{ width: `${lead.urgency_score}%` }} 
-                        />
-                      </div>
-                      <span className="text-[10px] font-mono font-bold text-[#FAFAFA]">{lead.urgency_score}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="py-2">
-                    <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[9px] font-bold border ${getDecayColor(lead.decay_status)}`}>
-                      {lead.decay_status === 'HOT' && <Zap className="w-2.5 h-2.5 fill-current" />}
-                      {lead.decay_status === 'HIGH_RISK' && <AlertCircle className="w-2.5 h-2.5" />}
-                      {lead.decay_status}
-                    </div>
-                  </TableCell>
-                  <TableCell className="py-2" onClick={(e) => e.stopPropagation()}>
-                    <Select 
-                      value={lead.status} 
-                      onValueChange={(val) => val && val !== lead.status && handleStatusChange(lead.id, val)}
-                      disabled={updatingId === lead.id}
-                    >
-                      <SelectTrigger className="h-6 w-[100px] bg-[#111111] border-[#262626] text-[9px] font-bold text-[#FAFAFA] uppercase tracking-tighter">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="bg-[#0A0A0A] border-[#262626] text-[#FAFAFA]">
-                        <SelectItem value="New Lead" className="text-[10px] uppercase font-bold">New Lead</SelectItem>
-                        <SelectItem value="Contacted" className="text-[10px] uppercase font-bold">Contacted</SelectItem>
-                        <SelectItem value="Qualified" className="text-[10px] uppercase font-bold">Qualified</SelectItem>
-                        <SelectItem value="Lost" className="text-[10px] uppercase font-bold">Lost</SelectItem>
-                        <SelectItem value="Closed" className="text-[10px] uppercase font-bold">Closed</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
-                  <TableCell className="py-2 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      {lead.status === 'New Lead' && lead.sla_status === 'BREACHED' && (
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          onClick={(e) => { e.stopPropagation(); handleAcknowledge(lead.id); }}
-                          className="h-6 text-[9px] font-bold uppercase tracking-tighter bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/20 hover:text-red-400"
-                        >
-                          Acknowledge
-                        </Button>
+                    </TableCell>
+
+                    {/* Breach Time */}
+                    <TableCell className="py-2">
+                      {lead.sla_status === 'BREACHED' && lead.sla_breached_at ? (
+                        <BreachAge breachedAt={lead.sla_breached_at} />
+                      ) : (
+                        <span className="text-[9px] text-muted-foreground">—</span>
                       )}
-                      <DropdownMenu>
-                        <DropdownMenuTrigger 
-                          render={
-                            <Button variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-[#FAFAFA] hover:bg-[#171717]" onClick={(e) => e.stopPropagation()}>
-                              <MoreVertical className="h-3 w-3" />
-                            </Button>
-                          }
-                        />
-                        <DropdownMenuContent align="end" className="bg-[#0A0A0A] border-[#262626] text-[#FAFAFA]">
-                          <DropdownMenuItem 
-                            className="text-[11px] font-medium text-red-500 focus:text-red-500 focus:bg-red-500/10 cursor-pointer"
-                            onClick={(e) => { e.stopPropagation(); setLeadToDelete(lead); }}
+                    </TableCell>
+
+                    {/* Urgency Score */}
+                    <TableCell className="py-2">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-1 w-10 bg-[#171717] rounded-full overflow-hidden border border-[#262626]">
+                          <div
+                            className={`h-full transition-all ${lead.urgency_score > 70 ? 'bg-orange-500' : 'bg-blue-500'}`}
+                            style={{ width: `${lead.urgency_score}%` }}
+                          />
+                        </div>
+                        <span className="text-[10px] font-mono font-bold text-[#FAFAFA]">{lead.urgency_score}</span>
+                      </div>
+                    </TableCell>
+
+                    {/* Decay */}
+                    <TableCell className="py-2">
+                      <div
+                        title="Algorithmic grade indicating conversion likelihood based on time decay"
+                        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[9px] font-bold border ${getDecayColor(lead.decay_status)}`}
+                      >
+                        {lead.decay_status === 'HOT' && <Zap className="w-2.5 h-2.5 fill-current" />}
+                        {lead.decay_status === 'HIGH_RISK' && <AlertCircle className="w-2.5 h-2.5" />}
+                        {lead.decay_status}
+                      </div>
+                    </TableCell>
+
+                    {/* Status */}
+                    <TableCell className="py-2" onClick={(e) => e.stopPropagation()}>
+                      <Select
+                        value={lead.status}
+                        onValueChange={(val) => val && val !== lead.status && handleSelectChange(lead, val)}
+                        disabled={updatingId === lead.id}
+                      >
+                        <SelectTrigger className="h-6 w-[100px] bg-[#111111] border-[#262626] text-[9px] font-bold text-[#FAFAFA] uppercase tracking-tighter">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-[#0A0A0A] border-[#262626] text-[#FAFAFA]">
+                          <SelectItem value="New Lead" className="text-[10px] uppercase font-bold">New Lead</SelectItem>
+                          <SelectItem value="Contacted" className="text-[10px] uppercase font-bold">Contacted</SelectItem>
+                          <SelectItem value="Qualified" className="text-[10px] uppercase font-bold">Qualified</SelectItem>
+                          <SelectItem value="Lost" className="text-[10px] uppercase font-bold">Lost</SelectItem>
+                          <SelectItem value="Closed" className="text-[10px] uppercase font-bold">Closed</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+
+                    {/* Actions */}
+                    <TableCell className="py-2 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        {lead.status === 'New Lead' && lead.sla_status === 'BREACHED' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => { e.stopPropagation(); handleAcknowledge(lead.id); }}
+                            title="Pause SLA escalations for 30 minutes"
+                            className="h-6 text-[9px] font-bold uppercase tracking-tighter bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/20 hover:text-red-400"
                           >
-                            <Trash className="w-3.5 h-3.5 mr-2" /> Delete Operation
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
+                            Acknowledge
+                          </Button>
+                        )}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={
+                              <Button variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-[#FAFAFA] hover:bg-[#171717]" onClick={(e) => e.stopPropagation()}>
+                                <MoreVertical className="h-3 w-3" />
+                              </Button>
+                            }
+                          />
+                          <DropdownMenuContent align="end" className="bg-[#0A0A0A] border-[#262626] text-[#FAFAFA]">
+                            {currentUserRole === 'AGENT' ? (
+                              <DropdownMenuItem
+                                className="text-[11px] font-medium text-red-500 focus:text-red-500 focus:bg-red-500/10 cursor-pointer"
+                                onClick={(e) => { e.stopPropagation(); handleRequestDeletion(lead.id); }}
+                              >
+                                <Trash className="w-3.5 h-3.5 mr-2" /> Request Deletion
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem
+                                className="text-[11px] font-medium text-red-500 focus:text-red-500 focus:bg-red-500/10 cursor-pointer"
+                                onClick={(e) => { e.stopPropagation(); setLeadToDelete(lead); }}
+                              >
+                                <Trash className="w-3.5 h-3.5 mr-2" /> Delete Lead
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>
       </div>
 
-      <div className="flex items-center justify-between px-4 py-3 border-t border-[#262626] bg-[#0A0A0A]">
+      {/* ── Pagination Footer ─────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between px-4 py-3 border-t border-[#262626] bg-[#0A0A0A] shrink-0">
         <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-          Showing {filteredLeads.length === 0 ? 0 : page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filteredLeads.length)} of {filteredLeads.length}
-          {filteredLeads.length !== leads.length && ` (filtered from ${leads.length})`}
+          {totalCount === 0 ? 'No results' : `Showing ${from}–${to} of ${totalCount.toLocaleString()}`}
+          {(search || statusFilter !== 'All') ? ' (filtered)' : ''}
         </span>
         <div className="flex items-center gap-2">
-          <Button 
-            variant="outline" 
-            size="sm" 
-            onClick={() => setPage(p => Math.max(0, p - 1))}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onPageChange(page - 1)}
             disabled={page === 0}
             className="h-7 w-7 p-0 bg-[#111111] border-[#262626] text-muted-foreground hover:text-[#FAFAFA]"
           >
             <ChevronLeft className="h-3.5 w-3.5" />
           </Button>
-          <Button 
-            variant="outline" 
-            size="sm" 
-            onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+          <span className="text-[10px] font-mono text-muted-foreground px-1">
+            {page + 1} / {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onPageChange(page + 1)}
             disabled={page >= totalPages - 1}
             className="h-7 w-7 p-0 bg-[#111111] border-[#262626] text-muted-foreground hover:text-[#FAFAFA]"
           >
@@ -323,15 +622,64 @@ export default function LeadDashboard({ leads, onLeadsChange, onLeadSelect }: Le
         </div>
       </div>
 
+      {/* ── Status Change Dialog ──────────────────────────────────────────── */}
+      <Dialog open={!!statusChange} onOpenChange={(open) => !open && setStatusChange(null)}>
+        <DialogContent className="bg-[#0A0A0A] border border-[#262626] text-[#FAFAFA] sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle className="text-[#FAFAFA] uppercase tracking-tighter italic font-black text-xl">
+              Log Contact Outcome
+            </DialogTitle>
+            <DialogDescription className="text-muted-foreground text-[11px] font-medium mt-2">
+              SLA regulations require a mandatory note (min. 20 characters) when changing a lead's status out of "New Lead".
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <textarea
+              className="w-full h-24 p-3 bg-[#111111] border border-[#262626] rounded-md text-[11px] text-[#FAFAFA] placeholder:text-muted-foreground focus:outline-none focus:border-[#404040] font-mono resize-none"
+              placeholder="e.g., Spoke to John, he is looking for a 3-bedroom in downtown. Follow up next Tuesday."
+              value={outcomeNote}
+              onChange={(e) => setOutcomeNote(e.target.value)}
+            />
+            <div className="text-right mt-1 text-[9px] text-muted-foreground">
+              {outcomeNote.trim().length} / 20 chars
+            </div>
+          </div>
+          <DialogFooter className="border-t border-[#262626] pt-4 sm:justify-start gap-2">
+            <Button
+              type="button"
+              disabled={outcomeNote.trim().length < 20}
+              onClick={() => {
+                if (statusChange) {
+                  handleStatusChange(statusChange.id, statusChange.newStatus, outcomeNote);
+                  setStatusChange(null);
+                }
+              }}
+              className="bg-[#FAFAFA] hover:bg-zinc-200 text-[#0A0A0A] font-bold text-[10px] uppercase tracking-wider disabled:opacity-50"
+            >
+              Confirm Contact
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setStatusChange(null)}
+              className="bg-[#111111] hover:bg-[#171717] border-[#262626] text-[#FAFAFA] font-bold text-[10px] uppercase tracking-wider"
+            >
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Delete Confirmation Dialog ────────────────────────────────────── */}
       <Dialog open={!!leadToDelete} onOpenChange={(open) => !open && setLeadToDelete(null)}>
         <DialogContent className="bg-[#0A0A0A] border border-[#262626] text-[#FAFAFA] sm:max-w-[425px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-red-500 uppercase tracking-tighter italic font-black text-xl">
               <ShieldAlert className="w-5 h-5" />
-              Operational Warning
+              Confirm Delete
             </DialogTitle>
             <DialogDescription className="text-muted-foreground uppercase text-[10px] tracking-widest font-bold mt-2">
-              Are you sure you want to terminate this lead record?
+              Are you sure you want to permanently delete this lead record?
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
@@ -342,17 +690,17 @@ export default function LeadDashboard({ leads, onLeadsChange, onLeadSelect }: Le
             </div>
           </div>
           <DialogFooter className="border-t border-[#262626] pt-4 sm:justify-start gap-2">
-            <Button 
-              type="button" 
+            <Button
+              type="button"
               variant="destructive"
               onClick={confirmDelete}
               className="bg-red-500 hover:bg-red-600 text-[#FAFAFA] font-bold text-[10px] uppercase tracking-wider"
             >
-              Terminate Operation
+              Delete Lead
             </Button>
-            <Button 
-              type="button" 
-              variant="outline" 
+            <Button
+              type="button"
+              variant="outline"
               onClick={() => setLeadToDelete(null)}
               className="bg-[#111111] hover:bg-[#171717] border-[#262626] text-[#FAFAFA] font-bold text-[10px] uppercase tracking-wider"
             >

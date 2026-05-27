@@ -1,6 +1,7 @@
 'use client';
 
 import { DollarSign, TrendingDown, AlertTriangle } from 'lucide-react';
+import { InfoTooltip } from '@/components/ui/info-tooltip';
 
 interface RevenueRiskProps {
   atRiskCount: number;
@@ -24,6 +25,7 @@ export default function RevenueRisk({ atRiskCount, estimatedLoss, avgDealValue }
       <div className="space-y-1">
         <h3 className="text-[10px] font-bold text-red-500 uppercase tracking-[0.2em] flex items-center gap-2">
           <AlertTriangle className="w-3 h-3" /> Revenue Leakage Awareness
+          <InfoTooltip content="Estimated capital exposure based on SLA breaches and lead decay velocity." />
         </h3>
         <p className="text-[11px] text-muted-foreground uppercase font-bold tracking-tight">Estimated Capital Exposure</p>
       </div>
@@ -38,7 +40,7 @@ export default function RevenueRisk({ atRiskCount, estimatedLoss, avgDealValue }
         <div className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground">
           <div className="flex items-center gap-1 text-red-400">
             <DollarSign className="w-3 h-3" />
-            <span>High Risk Invariants: {atRiskCount}</span>
+            <span>Leads Past Deadline: {atRiskCount}</span>
           </div>
         </div>
       </div>
@@ -51,7 +53,7 @@ export default function RevenueRisk({ atRiskCount, estimatedLoss, avgDealValue }
           />
         </div>
         <p className="text-[9px] text-muted-foreground font-medium uppercase tracking-tight">
-          Based on SLA breaches and lead decay velocity. (Assumes ${avgDealValue.toLocaleString()} avg commission)
+          Assumes ${avgDealValue.toLocaleString()} avg commission
         </p>
       </div>
     </div>

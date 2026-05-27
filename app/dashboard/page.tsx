@@ -4,7 +4,7 @@ import CommandCenter from '@/components/CommandCenter';
 export const dynamic = 'force-dynamic';
 
 export default async function DashboardPage() {
-  const leads = await getLeads();
+  const { leads: initialLeads, totalCount: initialTotalCount, currentUserRole } = await getLeads({ page: 0, pageSize: 20 });
 
   return (
     <>
@@ -19,7 +19,7 @@ export default async function DashboardPage() {
       </header>
 
       <main>
-        <CommandCenter initialLeads={leads} />
+        <CommandCenter initialLeads={initialLeads} initialTotalCount={initialTotalCount} currentUserRole={currentUserRole as any} />
       </main>
     </>
   );

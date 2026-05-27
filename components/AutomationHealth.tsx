@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { CheckCircle2, XCircle, AlertCircle, RefreshCw, Activity, Filter } from 'lucide-react';
+import { Activity } from 'lucide-react';
+import { InfoTooltip } from '@/components/ui/info-tooltip';
 
 type AutomationEvent = {
   id: string;
@@ -13,40 +14,54 @@ type AutomationEvent = {
 };
 
 export default function AutomationHealth({ events }: { events: AutomationEvent[] }) {
-  const [filter, setFilter] = useState<'All' | 'Success' | 'Failed' | 'Retrying'>('All');
+  const [filter, setFilter] = useState<'All' | 'Success' | 'Failed' | 'Retrying' | 'Pending'>('All');
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 5;
   const stats = {
     success: events.filter(e => e.status === 'Success').length,
     failed: events.filter(e => e.status === 'Failed').length,
+    retrying: events.filter(e => e.status === 'Retrying').length,
+    pending: events.filter(e => e.status === 'Pending').length,
     total: events.length
   };
 
-  const successRate = stats.total > 0 ? Math.round((stats.success / stats.total) * 100) : 100;
+  const completed = stats.success + stats.failed;
+  const successRate = completed > 0 ? Math.round((stats.success / completed) * 100) : 100;
+  const monitorLabel = stats.retrying > 0
+    ? `${stats.retrying} retrying`
+    : stats.pending > 0
+      ? `${stats.pending} awaiting callback`
+      : `${successRate}% callback success`;
 
   const filteredEvents = events.filter(e => filter === 'All' || e.status === filter);
   const displayedEvents = filteredEvents.slice(0, page * PAGE_SIZE);
 
   return (
     <div className="bg-[#0A0A0A] border border-[#262626] rounded-lg overflow-hidden shadow-2xl flex flex-col max-h-[500px]">
-      <div className="p-4 border-b border-[#262626] flex justify-between items-center bg-[#111111] shrink-0">
-        <div className="flex items-center gap-2">
-          <Activity className="w-3.5 h-3.5 text-green-500" />
-          <h3 className="text-[10px] font-bold text-[#FAFAFA] uppercase tracking-widest">Automation Monitor</h3>
+      <div className="p-4 border-b border-[#262626] flex justify-between items-start sm:items-center bg-[#111111] shrink-0">
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <Activity className="w-3.5 h-3.5 text-green-500" />
+            <h3 className="text-[10px] font-bold text-[#FAFAFA] uppercase tracking-widest flex items-center">
+              Automation Monitor
+              <InfoTooltip content="Tracking the real-time sync of your leads to external systems." />
+            </h3>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <select 
             className="bg-[#0A0A0A] border border-[#262626] text-[9px] uppercase font-bold text-[#FAFAFA] p-1 rounded"
             value={filter}
-            onChange={(e) => { setFilter(e.target.value as any); setPage(1); }}
+            onChange={(e) => { setFilter(e.target.value as typeof filter); setPage(1); }}
           >
             <option value="All">ALL STATUS</option>
             <option value="Success">SUCCESS</option>
             <option value="Failed">FAILED</option>
             <option value="Retrying">RETRYING</option>
+            <option value="Pending">PENDING CALLBACK</option>
           </select>
-          <div className={`w-1.5 h-1.5 rounded-full ${successRate > 90 ? 'bg-green-500' : 'bg-yellow-500'} animate-pulse`} />
-          <span className="text-[9px] font-bold text-muted-foreground uppercase">{successRate}% Health</span>
+          <div className={`w-1.5 h-1.5 rounded-full ${stats.retrying > 0 || stats.failed > 0 ? 'bg-yellow-500' : 'bg-green-500'} animate-pulse`} />
+          <span className="text-[9px] font-bold text-muted-foreground uppercase">{monitorLabel}</span>
         </div>
       </div>
       
@@ -60,7 +75,8 @@ export default function AutomationHealth({ events }: { events: AutomationEvent[]
                 <div className={`w-1.5 h-1.5 rounded-full ${
                   event.status === 'Success' ? 'bg-green-500' : 
                   event.status === 'Failed' ? 'bg-red-500' : 
-                  'bg-yellow-500 animate-spin'
+                  event.status === 'Retrying' ? 'bg-yellow-500 animate-spin' :
+                  'bg-blue-500 animate-pulse'
                 }`} />
                 <div className="flex flex-col">
                   <span className="text-[11px] font-bold text-[#FAFAFA] uppercase tracking-tight">{event.workflow_name}</span>
@@ -82,9 +98,10 @@ export default function AutomationHealth({ events }: { events: AutomationEvent[]
               <div className={`px-1.5 py-0.5 rounded border text-[8px] font-black uppercase ${
                 event.status === 'Success' ? 'text-green-500 border-green-500/20 bg-green-500/5' :
                 event.status === 'Failed' ? 'text-red-500 border-red-500/20 bg-red-500/5' :
-                'text-yellow-500 border-yellow-500/20 bg-yellow-500/5'
+                event.status === 'Retrying' ? 'text-yellow-500 border-yellow-500/20 bg-yellow-500/5' :
+                'text-blue-400 border-blue-500/20 bg-blue-500/5'
               }`}>
-                {event.status}
+                {event.status === 'Pending' ? 'Awaiting callback' : event.status}
               </div>
             </div>
           ))

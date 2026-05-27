@@ -15,7 +15,7 @@ export default function SubmitLeadPage() {
             <div className="w-5 h-5 bg-[#FAFAFA] rounded-sm flex items-center justify-center">
               <div className="w-2.5 h-2.5 bg-[#0A0A0A] rounded-full" />
             </div>
-            <span className="text-xs font-black tracking-tighter uppercase text-[#FAFAFA]">Lead Ops</span>
+            <span className="text-xs font-black tracking-tighter uppercase text-[#FAFAFA]">LeadVelox</span>
           </Link>
           <h1 className="text-3xl font-black text-[#FAFAFA] uppercase italic tracking-tight">
             Submit a Lead

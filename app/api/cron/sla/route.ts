@@ -29,15 +29,21 @@ const DEFAULT_ESCALATION_THRESHOLDS: EscalationThreshold[] = [
 export async function GET(req: Request) {
   // --- Auth guard ---
   const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
+  if (process.env.NODE_ENV === 'production') {
+    if (!cronSecret) {
+      return NextResponse.json({ error: 'Unauthorized: CRON_SECRET is missing in production' }, { status: 401 });
+    }
     const auth = req.headers.get('authorization');
     if (auth !== `Bearer ${cronSecret}`) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
   } else {
-    // Warn in production if secret is not configured
-    if (process.env.NODE_ENV === 'production') {
-      console.warn('[cron/sla] CRON_SECRET is not set — endpoint is unauthenticated in production');
+    // Development mode checks
+    if (cronSecret) {
+      const auth = req.headers.get('authorization');
+      if (auth !== `Bearer ${cronSecret}`) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
     }
   }
 
@@ -58,7 +64,7 @@ export async function GET(req: Request) {
   // 2. Fetch unresolved New Leads
   const { data: leads, error: fetchError } = await supabase
     .from('leads')
-    .select('id, created_at, last_contacted_at, response_deadline, decay_status, urgency_score, escalation_level, sla_status, last_acknowledged_at')
+    .select('id, name, email, phone, source, created_at, last_contacted_at, response_deadline, decay_status, urgency_score, escalation_level, sla_status, last_acknowledged_at')
     .in('status', ['New Lead'])
     .order('created_at', { ascending: true })
     .limit(500);
@@ -142,28 +148,53 @@ export async function GET(req: Request) {
               : process.env.N8N_WEBHOOK_URL;
 
           if (webhookUrl) {
+            const payload = {
+              event: 'sla_escalation',
+              notification_type: 'sla_breach',
+              lead_id: lead.id,
+              lead_name: lead.name,
+              lead_email: lead.email,
+              lead_phone: lead.phone,
+              lead_source: lead.source,
+              level: targetLevel,
+              sla_response_deadline: lead.response_deadline,
+              delay_minutes: Math.round(delayMinutes),
+              message: `SLA breach: ${lead.name} is ${Math.round(delayMinutes)} minutes overdue for first response.`,
+            };
+
             try {
               const controller = new AbortController();
               const timer = setTimeout(() => controller.abort(), 10_000);
-              await fetch(webhookUrl, {
+              const res = await fetch(webhookUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  event: 'sla_escalation',
-                  lead_id: lead.id,
-                  level: targetLevel,
-                  delay_minutes: Math.round(delayMinutes),
-                }),
+                body: JSON.stringify(payload),
                 signal: controller.signal,
               });
               clearTimeout(timer);
-              try {
-                await logLeadEvent(lead.id, 'System', `Escalation notification triggered for Level ${targetLevel}`, 'INFO');
-              } catch { /* ignore */ }
+
+              if (res.ok) {
+                try {
+                  await logLeadEvent(lead.id, 'System', `Escalation notification triggered for Level ${targetLevel}`, 'INFO');
+                } catch { /* ignore */ }
+              } else {
+                throw new Error(`HTTP Error ${res.status}`);
+              }
             } catch (webhookErr: unknown) {
               const msg = webhookErr instanceof Error ? webhookErr.message : 'Unknown error';
               try {
-                await logLeadEvent(lead.id, 'System', `Escalation webhook failed: ${msg}`, 'CRITICAL');
+                await logLeadEvent(lead.id, 'System', `Escalation webhook failed (${msg}). Queued for retry.`, 'CRITICAL');
+                
+                // Push to Inngest retry queue
+                await supabase.from('automation_events').insert([{
+                  lead_id: lead.id,
+                  workflow_name: `SLA Escalation (Level ${targetLevel})`,
+                  status: 'Retrying',
+                  error_message: msg,
+                  payload: payload,
+                  endpoint_url: webhookUrl,
+                  next_retry_at: new Date(Date.now() + 30 * 1000).toISOString()
+                }]);
               } catch { /* ignore */ }
             }
           }

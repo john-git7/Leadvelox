@@ -4,7 +4,7 @@
 
 ---
 
-## 📖 What Does This Application Do?
+## What Does This Application Do?
 
 Most sales teams lose hot leads simply because nobody responded fast enough. LeadVelox solves this by acting as a **real-time operational radar** for your lead pipeline:
 
@@ -16,10 +16,10 @@ Most sales teams lose hot leads simply because nobody responded fast enough. Lea
 
 ---
 
-## 🗂️ Project Structure
+## Project Structure
 
 ```
-lead-automation/
+leadvelox/
 ├── app/                    → All the web pages and API endpoints
 │   ├── page.tsx            → The public marketing homepage (/)
 │   ├── login/              → The login screen (/login)
@@ -56,7 +56,7 @@ lead-automation/
 
 ---
 
-## 🧠 Core Concepts Explained
+## Core Concepts Explained
 
 ### What is a "Lead"?
 A lead is a potential customer who has expressed interest in your business (e.g., they filled out a form on your website or clicked a Facebook ad). In this system, every lead has a name, email, phone number, urgency score, and SLA deadline attached to it.
@@ -106,7 +106,7 @@ If two leads share the same email address or phone number, the system automatica
 
 ---
 
-## 🏛️ Technology Stack
+## Technology Stack
 
 | Technology | What It Is (Plain English) |
 |---|---|
@@ -123,7 +123,7 @@ If two leads share the same email address or phone number, the system automatica
 
 ---
 
-## 🔒 Security Features
+## Security Features
 
 ### 1. Role-Based Access Control (RBAC)
 Three user roles with different levels of access:
@@ -147,7 +147,7 @@ All database operations, API keys, and sensitive business logic run exclusively 
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 Before you begin, make sure you have the following installed on your computer:
@@ -158,8 +158,8 @@ Before you begin, make sure you have the following installed on your computer:
 ### Step 1: Install the Project
 ```bash
 # Clone this repository to your computer
-git clone <repository_url> lead-automation
-cd lead-automation
+git clone <repository_url> leadvelox
+cd leadvelox
 
 # Install all the required packages
 npm install
@@ -211,7 +211,7 @@ curl -X GET "http://localhost:3000/api/cron/sla" \
 
 ---
 
-## 📊 Dashboard Pages
+## Dashboard Pages
 
 | URL | Page | Who Can Access |
 |---|---|---|
@@ -223,7 +223,7 @@ curl -X GET "http://localhost:3000/api/cron/sla" \
 
 ---
 
-## 🔄 How a Lead Flows Through the System
+## How a Lead Flows Through the System
 
 ```
 1. Lead submits form at /submit
@@ -253,7 +253,7 @@ curl -X GET "http://localhost:3000/api/cron/sla" \
 
 ---
 
-## 📁 Database Tables
+## Database Tables
 
 | Table | What It Stores |
 |---|---|
@@ -267,7 +267,7 @@ curl -X GET "http://localhost:3000/api/cron/sla" \
 
 ---
 
-## 💰 Pricing Model (For Agency Use)
+## Pricing Model (For Agency Use)
 
 | Item | Amount |
 |---|---|
@@ -280,6 +280,6 @@ curl -X GET "http://localhost:3000/api/cron/sla" \
 
 ---
 
-## 📄 License
+## License
 
 Distributed under the MIT License. See `LICENSE` for details.

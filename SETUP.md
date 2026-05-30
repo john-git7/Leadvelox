@@ -14,7 +14,7 @@
 
 ```bash
 git clone <your-repo-url>
-cd lead-automation
+cd leadvelox
 npm install
 ```
 

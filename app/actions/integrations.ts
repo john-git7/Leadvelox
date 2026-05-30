@@ -93,7 +93,10 @@ export async function getIntegrationHealth(): Promise<IntegrationHealth> {
   let webhookStatus: IntegrationStatus = 'unknown';
   let webhookDetail = 'No webhook activity recorded';
 
-  if (stuckCount > 0) {
+  if (!process.env.N8N_WEBHOOK_URL) {
+    webhookStatus = 'down';
+    webhookDetail = 'N8N_WEBHOOK_URL missing in environment';
+  } else if (stuckCount > 0) {
     webhookStatus = 'degraded';
     webhookDetail = `${stuckCount} event(s) stuck in Pending >10min`;
   } else if (lastSuccess) {

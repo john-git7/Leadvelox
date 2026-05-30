@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { updateLeadStatus, deleteLead, acknowledgeAlert, assignLead, requestLeadDeletion, bulkDeleteLeads } from '@/app/actions/leads';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -29,6 +29,7 @@ type Lead = {
   sla_breached_at: string | null;
   created_at: string;
   last_contacted_at?: string | null;
+  last_acknowledged_at?: string | null;
   assigned_agent_id?: string | null;
   escalation_level: number;
   delete_requested?: boolean;
@@ -46,6 +47,7 @@ interface LeadDashboardProps {
   endDate?: string;
   agents: Agent[];
   currentUserRole?: 'ADMIN' | 'MANAGER' | 'AGENT';
+  currentUserId?: string;
   // Callbacks — all filtering/pagination is server-driven
   onLeadsChange: (leads: Lead[]) => void;
   onLeadSelect?: (lead: Lead) => void;
@@ -117,11 +119,64 @@ function BreachAge({ breachedAt }: { breachedAt: string }) {
 
   return (
     <span
+      suppressHydrationWarning
       title="Total time this lead has been ignored since their SLA deadline expired"
       className="text-[9px] font-mono text-red-500 font-bold"
     >
       {label}
     </span>
+  );
+}
+
+// ─── Snooze Action Component ──────────────────────────────────────────────────
+function SnoozeAction({ leadId, lastAcknowledgedAt, onAcknowledge }: { leadId: string, lastAcknowledgedAt?: string | null, onAcknowledge: (id: string) => void }) {
+  const [timeLeft, setTimeLeft] = useState('');
+  const [isSnoozed, setIsSnoozed] = useState(false);
+
+  useEffect(() => {
+    if (!lastAcknowledgedAt) {
+      setIsSnoozed(false);
+      return;
+    }
+    const calc = () => {
+      const ackTime = new Date(lastAcknowledgedAt).getTime();
+      const snoozeEnd = ackTime + 30 * 60 * 1000;
+      const diff = snoozeEnd - Date.now();
+
+      if (diff <= 0) {
+        setIsSnoozed(false);
+        setTimeLeft('');
+      } else {
+        setIsSnoozed(true);
+        const m = Math.floor(diff / 60000);
+        const s = Math.floor((diff % 60000) / 1000);
+        setTimeLeft(`${m}m ${s.toString().padStart(2, '0')}s`);
+      }
+    };
+    calc();
+    const id = setInterval(calc, 1000);
+    return () => clearInterval(id);
+  }, [lastAcknowledgedAt]);
+
+  if (isSnoozed) {
+    return (
+      <div className="flex items-center gap-1.5 px-2 h-6 bg-yellow-500/10 border border-yellow-500/20 rounded" title="Escalations paused">
+        <Clock className="w-2.5 h-2.5 text-yellow-500" />
+        <span className="text-[9px] font-mono font-bold text-yellow-500">{timeLeft}</span>
+      </div>
+    );
+  }
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={(e) => { e.stopPropagation(); onAcknowledge(leadId); }}
+      title="Pause SLA escalations for 30 minutes"
+      className="h-6 text-[9px] font-bold uppercase tracking-tighter bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/20 hover:text-red-400"
+    >
+      Acknowledge
+    </Button>
   );
 }
 
@@ -144,10 +199,23 @@ export default function LeadDashboard({
   onDateFilterChange,
   onPageChange,
   currentUserRole = 'AGENT',
+  currentUserId,
 }: LeadDashboardProps) {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [leadToDelete, setLeadToDelete] = useState<Lead | null>(null);
-  const [statusChange, setStatusChange] = useState<{ id: string, newStatus: string, currentStatus: string } | null>(null);
+
+  // Sort leads: Unassigned Level 1 SLA warnings come first
+  const sortedLeads = useMemo(() => {
+    return [...leads].sort((a, b) => {
+      const aUrgent = a.assigned_agent_id === null && (a.escalation_level ?? 0) >= 1;
+      const bUrgent = b.assigned_agent_id === null && (b.escalation_level ?? 0) >= 1;
+      if (aUrgent && !bUrgent) return -1;
+      if (!aUrgent && bUrgent) return 1;
+      return 0; // preserve original order (created_at)
+    });
+  }, [leads]);
+
+  const [statusChange, setStatusChange] = useState<{ id: string, newStatus: string, currentStatus: string, leadName: string } | null>(null);
   const [outcomeNote, setOutcomeNote] = useState('');
   const [assigningId, setAssigningId] = useState<string | null>(null);
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
@@ -181,7 +249,7 @@ export default function LeadDashboard({
 
   const handleSelectChange = (lead: Lead, newStatus: string) => {
     if (lead.status === 'New Lead' && newStatus !== 'New Lead') {
-      setStatusChange({ id: lead.id, newStatus, currentStatus: lead.status });
+      setStatusChange({ id: lead.id, newStatus, currentStatus: lead.status, leadName: lead.name.split(' ')[0] });
       setOutcomeNote('');
     } else {
       handleStatusChange(lead.id, newStatus);
@@ -243,7 +311,7 @@ export default function LeadDashboard({
     const result = await acknowledgeAlert(id);
     if (result.success) {
       toast.success('Alert acknowledged. Escalation paused.');
-      onLeadsChange(leads.map(lead => lead.id === id ? { ...lead, escalation_level: 0 } : lead));
+      onLeadsChange(leads.map(lead => lead.id === id ? { ...lead, last_acknowledged_at: new Date().toISOString() } : lead));
     } else {
       toast.error('Failed to acknowledge alert');
     }
@@ -376,19 +444,24 @@ export default function LeadDashboard({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {leads.length === 0 ? (
+            {sortedLeads.length === 0 ? (
               <TableRow className="border-[#262626]">
                 <TableCell colSpan={8} className="h-32 text-center text-[11px] text-muted-foreground">
                   {search || statusFilter !== 'All' ? 'NO LEADS MATCH YOUR FILTERS' : 'NO ACTIVE LEADS IN QUEUE'}
                 </TableCell>
               </TableRow>
             ) : (
-              leads.map((lead) => {
+              sortedLeads.map((lead) => {
                 const assignedAgent = lead.assigned_agent_id ? agentMap.get(lead.assigned_agent_id) : null;
+                const isUrgentUnassigned = lead.assigned_agent_id === null && (lead.escalation_level ?? 0) >= 1;
                 return (
                   <TableRow
                     key={lead.id}
-                    className={`border-[#262626] cursor-pointer transition-colors group ${lead.id === selectedLeadId ? 'bg-[#1a1a1a]' : ''} ${lead.sla_status === 'BREACHED' ? 'bg-red-950/20 hover:bg-red-900/30' : 'hover:bg-[#111111]/50'}`}
+                    className={`border-[#262626] cursor-pointer transition-colors group ${lead.id === selectedLeadId ? 'bg-[#1a1a1a]' : ''} ${
+                      isUrgentUnassigned
+                        ? 'bg-red-500/10 hover:bg-red-500/20 animate-pulse border-red-500/30'
+                        : lead.sla_status === 'BREACHED' ? 'bg-red-950/20 hover:bg-red-900/30' : 'hover:bg-[#111111]/50'
+                    }`}
                     onClick={() => onLeadSelect?.(lead)}
                   >
                     {/* Checkbox */}
@@ -446,7 +519,7 @@ export default function LeadDashboard({
                             <SelectItem value="__none__" className="text-[10px] text-zinc-500">
                               Unassigned
                             </SelectItem>
-                            {agents.map(agent => (
+                            {agents.filter(agent => currentUserRole !== 'AGENT' || agent.id === currentUserId).map(agent => (
                               <SelectItem key={agent.id} value={agent.id} className="text-[10px] font-medium">
                                 <div className="flex flex-col">
                                   <span>{agent.email}</span>
@@ -545,15 +618,11 @@ export default function LeadDashboard({
                     <TableCell className="py-2 text-right">
                       <div className="flex items-center justify-end gap-2">
                         {lead.status === 'New Lead' && lead.sla_status === 'BREACHED' && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={(e) => { e.stopPropagation(); handleAcknowledge(lead.id); }}
-                            title="Pause SLA escalations for 30 minutes"
-                            className="h-6 text-[9px] font-bold uppercase tracking-tighter bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500/20 hover:text-red-400"
-                          >
-                            Acknowledge
-                          </Button>
+                          <SnoozeAction
+                            leadId={lead.id}
+                            lastAcknowledgedAt={lead.last_acknowledged_at}
+                            onAcknowledge={handleAcknowledge}
+                          />
                         )}
                         <DropdownMenu>
                           <DropdownMenuTrigger
@@ -627,7 +696,7 @@ export default function LeadDashboard({
         <DialogContent className="bg-[#0A0A0A] border border-[#262626] text-[#FAFAFA] sm:max-w-[425px]">
           <DialogHeader>
             <DialogTitle className="text-[#FAFAFA] uppercase tracking-tighter italic font-black text-xl">
-              Log Contact Outcome
+              Log Contact Outcome {statusChange?.leadName && `— ${statusChange.leadName}`}
             </DialogTitle>
             <DialogDescription className="text-muted-foreground text-[11px] font-medium mt-2">
               SLA regulations require a mandatory note (min. 20 characters) when changing a lead's status out of "New Lead".

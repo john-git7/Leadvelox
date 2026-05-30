@@ -1,13 +1,17 @@
 import { createAdminClient } from '@/lib/supabase/server';
 
 /**
- * Rate limiting using a dedicated rate_limits table.
+ * Rate limiting via an atomic PostgreSQL function.
  *
- * Tracks requests by an opaque identifier (hashed IP or email).
- * Uses a sliding window: counts rows created within the last `windowMinutes`.
+ * Delegates to check_rate_limit() (defined in 010_rate_limit_atomic.sql),
+ * which uses pg_advisory_xact_lock to make the entire prune → count → insert
+ * sequence atomic. This eliminates the COUNT → compare → INSERT race condition
+ * that allowed concurrent requests from the same identifier to slip through.
  *
- * PRODUCTION NOTE: For high-traffic deployments, replace this with Upstash Redis.
- * Supabase is acceptable at SMB volumes (<1000 req/hr on this endpoint).
+ * Sliding window: requests created within the last `windowMinutes`.
+ *
+ * PRODUCTION NOTE: For very high traffic (> 1,000 req/hr on intake),
+ * replace this with Upstash Redis. Advisory locks are safe at SMB volumes.
  */
 export async function checkRateLimit(
   identifier: string,
@@ -15,36 +19,19 @@ export async function checkRateLimit(
   windowMinutes: number = 15
 ): Promise<boolean> {
   const supabase = await createAdminClient();
-  const windowStart = new Date(Date.now() - windowMinutes * 60 * 1000).toISOString();
 
-  // Count recent requests from this identifier within the sliding window
-  const { count, error } = await supabase
-    .from('rate_limits')
-    .select('*', { count: 'exact', head: true })
-    .eq('identifier', identifier)
-    .gt('created_at', windowStart);
+  const { data, error } = await supabase.rpc('check_rate_limit', {
+    p_identifier: identifier,
+    p_limit: limit,
+    p_window_min: windowMinutes,
+  });
 
   if (error) {
-    // Fail open — do not block legitimate users if DB check fails
+    // Fail open — do not block legitimate users if the DB check itself fails.
     console.error('[checkRateLimit] DB error:', error.message);
     return true;
   }
 
-  const requestCount = count ?? 0;
-  if (requestCount >= limit) {
-    return false; // Rate limit exceeded
-  }
-
-  // Record this request (fire-and-forget is acceptable here)
-  await supabase.from('rate_limits').insert([{ identifier }]);
-
-  // Prune old entries for this identifier to prevent unbounded table growth
-  supabase
-    .from('rate_limits')
-    .delete()
-    .eq('identifier', identifier)
-    .lt('created_at', windowStart)
-    .then(() => {/* ignore */});
-
-  return true;
+  // The PG function returns TRUE = allowed, FALSE = rate limit exceeded.
+  return data === true;
 }

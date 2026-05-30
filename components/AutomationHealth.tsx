@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Activity } from 'lucide-react';
 import { InfoTooltip } from '@/components/ui/info-tooltip';
 
@@ -11,9 +11,20 @@ type AutomationEvent = {
   duration_ms?: number;
   error_message?: string;
   created_at: string;
+  lead_id?: string;
 };
 
-export default function AutomationHealth({ events }: { events: AutomationEvent[] }) {
+export default function AutomationHealth({
+  events,
+  onEventSelect,
+}: {
+  events: AutomationEvent[];
+  onEventSelect?: (event: AutomationEvent) => void;
+}) {
+  useEffect(() => {
+    console.log('[AutomationHealth] Received events on client:', events);
+  }, [events]);
+
   const [filter, setFilter] = useState<'All' | 'Success' | 'Failed' | 'Retrying' | 'Pending'>('All');
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 5;
@@ -37,7 +48,7 @@ export default function AutomationHealth({ events }: { events: AutomationEvent[]
   const displayedEvents = filteredEvents.slice(0, page * PAGE_SIZE);
 
   return (
-    <div className="bg-[#0A0A0A] border border-[#262626] rounded-lg overflow-hidden shadow-2xl flex flex-col max-h-[500px]">
+    <div className="bg-[#0A0A0A] border border-[#262626] rounded-lg overflow-hidden shadow-2xl flex flex-col h-full">
       <div className="p-4 border-b border-[#262626] flex justify-between items-start sm:items-center bg-[#111111] shrink-0">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
@@ -70,7 +81,12 @@ export default function AutomationHealth({ events }: { events: AutomationEvent[]
           <p className="text-[10px] text-muted-foreground text-center py-4 uppercase font-bold tracking-tighter">No events match filter</p>
         ) : (
           displayedEvents.map((event) => (
-            <div key={event.id} className="flex items-center justify-between group">
+            <div
+              key={event.id}
+              onClick={() => onEventSelect?.(event)}
+              className="flex items-center justify-between group p-2 rounded-md transition-all cursor-pointer hover:bg-zinc-900/60 active:bg-zinc-900"
+              title="Click to view full workflow execution audit details"
+            >
               <div className="flex items-center gap-3">
                 <div className={`w-1.5 h-1.5 rounded-full ${
                   event.status === 'Success' ? 'bg-green-500' : 

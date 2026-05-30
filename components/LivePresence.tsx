@@ -49,10 +49,6 @@ export default function LivePresence() {
           {onlineCount} {onlineCount === 1 ? 'Agent' : 'Agents'} Active
         </span>
       </div>
-      <div className="w-px h-3 bg-[#262626]" />
-      <span className="text-[10px] font-mono text-muted-foreground truncate max-w-[150px]">
-        {currentUser.email?.split('@')[0]}
-      </span>
     </div>
   );
 }

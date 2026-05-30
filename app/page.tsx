@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { AlertTriangle, Clock, Zap, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
 
 export default function Home() {
-  const bookingUrl = process.env.NEXT_PUBLIC_BOOKING_URL ?? '#';
+  const bookingUrl = process.env.NEXT_PUBLIC_BOOKING_URL || 'https://calendly.com/leadvelox/demo';
   return (
     <main className="min-h-screen bg-[#0A0A0A] text-[#FAFAFA]">
 

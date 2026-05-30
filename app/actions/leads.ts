@@ -2,7 +2,7 @@
 
 import { headers } from 'next/headers';
 import { createClient, createAdminClient } from '@/lib/supabase/server';
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, unstable_cache } from 'next/cache';
 import { leadSchema } from '@/lib/validations';
 import { calculateDecayStatus, calculateUrgencyScore, logLeadEvent, triggerOrchestration } from '@/lib/orchestration';
 import { calculateResponseDeadline, getSeverityForDecay } from '@/lib/sla';
@@ -141,13 +141,14 @@ export async function getLeadEvents(leadId: string) {
  * FEATURE 5: AUTOMATION HEALTH MONITORING
  */
 export async function getAutomationHealth() {
-  const { supabase } = await assertAuth();
+  const { supabase, role } = await assertRole(['ADMIN', 'MANAGER', 'AGENT']);
+  
   const { data } = await supabase
     .from('automation_events')
     .select('*')
     .order('created_at', { ascending: false })
     .limit(50);
-  return data || [];
+  return (data as any[]) || [];
 }
 
 /**
@@ -158,16 +159,24 @@ export async function getAutomationHealth() {
  *
  * Default PAGE_SIZE is intentionally small (20) to keep initial load fast.
  */
-export async function getLeads(options: {
-  page?: number;
-  pageSize?: number;
-  search?: string;
-  statusFilter?: string;
-  startDate?: string;
-  endDate?: string;
+export async function getLeads({ 
+  page = 0, 
+  pageSize = 20, 
+  search = '', 
+  statusFilter = 'All',
+  startDate,
+  endDate,
+  timezoneOffset = 0
+}: { 
+  page?: number, 
+  pageSize?: number, 
+  search?: string, 
+  statusFilter?: string,
+  startDate?: string,
+  endDate?: string,
+  timezoneOffset?: number
 } = {}) {
-  const { page = 0, pageSize = 20, search = '', statusFilter = 'All', startDate, endDate } = options;
-  const { supabase, role } = await assertRole(['ADMIN', 'MANAGER', 'AGENT']);
+  const { supabase, role, user } = await assertRole(['ADMIN', 'MANAGER', 'AGENT']);
 
   let query = supabase
     .from('leads')
@@ -175,6 +184,11 @@ export async function getLeads(options: {
       'id, name, email, phone, source, status, urgency_score, decay_status, is_duplicate, response_deadline, sla_status, sla_breached_at, created_at, escalation_level, last_acknowledged_at, last_contacted_at, assigned_agent_id, delete_requested, lead_groups(primary_email, primary_phone)',
       { count: 'exact' }
     );
+
+  // RBAC for AGENT
+  if (role === 'AGENT') {
+    query = query.or(`assigned_agent_id.eq.${user.id},assigned_agent_id.is.null`);
+  }
 
   // DB-level search
   if (search.trim()) {
@@ -191,14 +205,18 @@ export async function getLeads(options: {
     }
   }
 
-  // Date filters
+  // Date filters (adjusting for client timezone)
   if (startDate) {
-    // Add 00:00:00 to start date
-    query = query.gte('created_at', `${startDate}T00:00:00.000Z`);
+    const [year, month, day] = startDate.split('-').map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    date.setUTCMinutes(date.getUTCMinutes() + timezoneOffset);
+    query = query.gte('created_at', date.toISOString());
   }
   if (endDate) {
-    // Add 23:59:59 to end date
-    query = query.lte('created_at', `${endDate}T23:59:59.999Z`);
+    const [year, month, day] = endDate.split('-').map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
+    date.setUTCMinutes(date.getUTCMinutes() + timezoneOffset);
+    query = query.lte('created_at', date.toISOString());
   }
 
   const { data, count, error } = await query
@@ -230,7 +248,8 @@ export async function getLeads(options: {
   return {
     leads: leads,
     totalCount: count || 0,
-    currentUserRole: role
+    currentUserRole: role,
+    currentUserId: user.id
   };
 }
 
@@ -239,8 +258,15 @@ export async function getLeads(options: {
  * Agents use this to flag a lead for deletion by a manager.
  */
 export async function requestLeadDeletion(leadId: string) {
-  const { supabase, user } = await assertAuth();
+  const { supabase, role, user } = await assertRole(['ADMIN', 'MANAGER', 'AGENT']);
   
+  if (role === 'AGENT') {
+    const { data: lead } = await supabase.from('leads').select('assigned_agent_id').eq('id', leadId).single();
+    if (lead?.assigned_agent_id !== user.id) {
+      return { success: false, error: 'Access Denied: Agents can only delete their own assigned leads.' };
+    }
+  }
+
   const { error } = await supabase
     .from('leads')
     .update({ delete_requested: true })
@@ -248,7 +274,7 @@ export async function requestLeadDeletion(leadId: string) {
 
   if (error) return { success: false, error: error.message };
 
-  await logLeadEvent(leadId, 'System', `Agent (${user.email}) requested lead deletion.`, 'LOW');
+  await logLeadEvent(leadId, 'System', `${role} (${user.email}) requested lead deletion.`, 'LOW');
   revalidatePath('/');
   return { success: true };
 }
@@ -276,6 +302,10 @@ export async function bulkDeleteLeads(leadIds: string[]) {
 
 
 export async function getBreachedLeads() {
+  // All roles may see breach counts — required for the global SLA banner.
+  // Using assertRole instead of assertAuth keeps the pattern consistent and
+  // ensures only actual operator accounts (with a profiles row) can read PII.
+  await assertRole(['ADMIN', 'MANAGER', 'AGENT']);
   const supabase = await createAdminClient();
   const { data, error } = await supabase
     .from('leads')
@@ -287,7 +317,7 @@ export async function getBreachedLeads() {
   if (error) {
     console.error('Failed to fetch breached leads', error);
   }
-  
+
   return data || [];
 }
 
@@ -296,7 +326,10 @@ export async function getBreachedLeads() {
  * Fetches counts server-side; not affected by pagination.
  */
 export async function getLeadStats() {
-  const { supabase } = await assertAuth();
+  // Use assertRole for consistency — getLeadStats is called from the dashboard
+  // which is already role-gated, but this keeps the server-action layer safe
+  // if the function is ever called from a new context.
+  const { supabase } = await assertRole(['ADMIN', 'MANAGER', 'AGENT']);
 
   const [total, hot, highRisk, duplicates, uncontacted] = await Promise.all([
     supabase.from('leads').select('*', { count: 'exact', head: true }),
@@ -372,15 +405,32 @@ export async function updateLeadStatus(id: string, status: string, note?: string
  * and does not immediately re-escalate the same lead.
  */
 export async function acknowledgeAlert(id: string) {
-  const { supabase } = await assertAuth();
+  const { supabase, user, role } = await assertRole(['ADMIN', 'MANAGER', 'AGENT']);
+
+  // Agents may only acknowledge alerts for leads assigned to them.
+  // ADMIN and MANAGER can acknowledge any lead.
+  if (role === 'AGENT') {
+    const { data: lead } = await supabase
+      .from('leads')
+      .select('assigned_agent_id')
+      .eq('id', id)
+      .single();
+
+    if (lead?.assigned_agent_id !== user.id) {
+      return {
+        success: false,
+        error: 'Access Denied: Agents can only acknowledge alerts on their own assigned leads.',
+      };
+    }
+  }
 
   const { error } = await supabase
     .from('leads')
     .update({
-      escalation_level: 0,
       last_acknowledged_at: new Date().toISOString(),
-      // Do NOT change sla_status: the SLA is still breached.
-      // Acknowledging means "I know about this" — not "this is resolved".
+      // Do NOT change sla_status or escalation_level: the SLA is still breached.
+      // Acknowledging means "I know about this" — not "this is resolved", 
+      // and we want to preserve the history of how far it escalated.
     })
     .eq('id', id);
 
@@ -554,28 +604,42 @@ export async function resolveDuplicate(id: string, action: 'archive' | 'separate
  * dropdown. Uses the admin client to access auth.admin.listUsers() so we can
  * surface real email addresses instead of UUIDs.
  */
+const getAgentsCached = unstable_cache(
+  async () => {
+    const adminClient = await createAdminClient();
+
+    const { data: { users }, error: usersError } = await adminClient.auth.admin.listUsers();
+    if (usersError || !users) return [];
+
+    // Fetch profiles to cross-reference roles
+    const { data: profiles } = await adminClient
+      .from('profiles')
+      .select('id, role');
+
+    const profileMap = new Map((profiles ?? []).map(p => [p.id, p.role]));
+
+    return users
+      .filter(u => profileMap.has(u.id)) // Only return users who have a profiles row (operators)
+      .map(u => ({
+        id: u.id,
+        email: u.email || 'Unknown',
+        role: profileMap.get(u.id) as string,
+      }))
+      .sort((a, b) => a.email.localeCompare(b.email));
+  },
+  ['agents-list'],
+  { revalidate: 300 } // 5 minutes TTL
+);
+
+/**
+ * FEATURE: ASSIGNMENT
+ * Used by the CommandCenter to populate the "Assign to Agent" 
+ * dropdown. Uses the admin client to access auth.admin.listUsers() so we can
+ * surface real email addresses instead of UUIDs.
+ */
 export async function getAgents(): Promise<{ id: string; email: string; role: string }[]> {
   await assertAuth(); // Require logged-in user
-  const adminClient = await createAdminClient();
-
-  const { data: { users }, error: usersError } = await adminClient.auth.admin.listUsers();
-  if (usersError || !users) return [];
-
-  // Fetch profiles to cross-reference roles
-  const { data: profiles } = await adminClient
-    .from('profiles')
-    .select('id, role');
-
-  const profileMap = new Map((profiles ?? []).map(p => [p.id, p.role]));
-
-  return users
-    .filter(u => profileMap.has(u.id)) // Only return users who have a profiles row (operators)
-    .map(u => ({
-      id: u.id,
-      email: u.email ?? '(no email)',
-      role: profileMap.get(u.id) ?? 'AGENT',
-    }))
-    .sort((a, b) => a.email.localeCompare(b.email));
+  return getAgentsCached();
 }
 
 /**
@@ -588,29 +652,41 @@ export async function getAgents(): Promise<{ id: string; email: string; role: st
 export async function assignLead(leadId: string, agentId: string | null) {
   const { supabase, user } = await assertAuth();
 
-  // Fetch current lead assignment and user role
-  const [{ data: lead }, { data: profile }] = await Promise.all([
-    supabase.from('leads').select('assigned_agent_id').eq('id', leadId).single(),
-    supabase.from('profiles').select('role').eq('id', user.id).single()
-  ]);
-
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
   const role = profile?.role as UserRole || 'AGENT';
-  
+
+  let updateQuery = supabase.from('leads').update({ assigned_agent_id: agentId }).eq('id', leadId);
+
   if (role === 'AGENT') {
     if (agentId !== null) {
       // Trying to assign
       if (agentId !== user.id) {
         return { success: false, error: 'Access Denied: Agents can only assign leads to themselves.' };
       }
-      if (lead?.assigned_agent_id && lead.assigned_agent_id !== user.id) {
-        return { success: false, error: 'Access Denied: This lead is already assigned to another agent.' };
-      }
+      // Atomic lock: Only update if it is currently unassigned OR already assigned to this agent
+      updateQuery = updateQuery.or(`assigned_agent_id.is.null,assigned_agent_id.eq.${user.id}`);
     } else {
       // Trying to unassign
-      if (lead?.assigned_agent_id !== user.id) {
-        return { success: false, error: 'Access Denied: You cannot unassign a lead that belongs to someone else.' };
-      }
+      // Atomic lock: Only allow unassigning if currently assigned to this agent
+      updateQuery = updateQuery.eq('assigned_agent_id', user.id);
     }
+  }
+
+  const { data: updatedLeads, error } = await updateQuery.select('id');
+
+  if (error) return { success: false, error: error.message };
+
+  // If no rows were affected, the atomic condition failed (or lead doesn't exist)
+  if (!updatedLeads || updatedLeads.length === 0) {
+    if (role === 'AGENT') {
+      return { 
+        success: false, 
+        error: agentId !== null 
+          ? 'Too late, this lead was already claimed!' 
+          : 'Access Denied: You cannot unassign a lead that belongs to someone else.' 
+      };
+    }
+    return { success: false, error: 'Failed to update lead assignment.' };
   }
 
   let targetEmail = 'nobody';
@@ -624,13 +700,6 @@ export async function assignLead(leadId: string, agentId: string | null) {
     }
   }
 
-  const { error } = await supabase
-    .from('leads')
-    .update({ assigned_agent_id: agentId })
-    .eq('id', leadId);
-
-  if (error) return { success: false, error: error.message };
-
   await logLeadEvent(
     leadId,
     'Assignment',
@@ -640,6 +709,37 @@ export async function assignLead(leadId: string, agentId: string | null) {
     'INFO'
   );
 
-  revalidatePath('/dashboard');
   return { success: true };
 }
+
+/**
+ * Fetch a single lead by its ID with duplicate details, matching getLeads.
+ */
+export async function getLead(id: string) {
+  const { supabase } = await assertRole(['ADMIN', 'MANAGER', 'AGENT']);
+
+  const { data: lead, error } = await supabase
+    .from('leads')
+    .select('id, name, email, phone, source, status, urgency_score, decay_status, is_duplicate, response_deadline, sla_status, sla_breached_at, created_at, escalation_level, last_acknowledged_at, last_contacted_at, assigned_agent_id, delete_requested, lead_groups(primary_email, primary_phone)')
+    .eq('id', id)
+    .single();
+
+  if (error || !lead) {
+    return null;
+  }
+
+  let duplicate_reason = null;
+  if (lead.is_duplicate && lead.lead_groups) {
+    const lg = Array.isArray(lead.lead_groups) ? lead.lead_groups[0] : lead.lead_groups;
+    if (lg) {
+      const eMatch = lg.primary_email === lead.email;
+      const pMatch = lg.primary_phone === lead.phone;
+      if (eMatch && pMatch) duplicate_reason = 'Email & Phone';
+      else if (eMatch) duplicate_reason = 'Email';
+      else if (pMatch) duplicate_reason = 'Phone';
+    }
+  }
+  const { lead_groups, ...rest } = lead as any;
+  return { ...rest, duplicate_reason };
+}
+

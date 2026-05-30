@@ -64,15 +64,34 @@ export async function GET(req: Request) {
   // 2. Fetch unresolved New Leads
   const { data: leads, error: fetchError } = await supabase
     .from('leads')
-    .select('id, name, email, phone, source, created_at, last_contacted_at, response_deadline, decay_status, urgency_score, escalation_level, sla_status, last_acknowledged_at')
+    .select('id, name, email, phone, source, created_at, last_contacted_at, response_deadline, decay_status, urgency_score, escalation_level, sla_status, last_acknowledged_at, assigned_agent_id')
     .in('status', ['New Lead'])
     .order('created_at', { ascending: true })
-    .limit(500);
+    .limit(1000);
 
   if (fetchError) {
     console.error('[cron/sla] Failed to fetch leads:', fetchError.message);
     return NextResponse.json({ error: 'Failed to fetch leads' }, { status: 500 });
   }
+
+  if (leads && leads.length === 1000) {
+    console.warn('[cron/sla] WARNING: Fetched 1000 leads. SLA cron may be falling behind unresolved leads.');
+  }
+
+  // 3. Fetch unresolved Intake events to pause SLA on undelivered leads
+  const { data: stuckEvents } = await supabase
+    .from('automation_events')
+    .select('lead_id')
+    .eq('workflow_name', 'Lead Intake Workflow')
+    .in('status', ['Pending', 'Retrying', 'Failed']);
+
+  const stuckLeadIds = new Set(stuckEvents?.map(e => e.lead_id) || []);
+
+  // 4. Fetch active agents for auto-assignment fallback
+  const { data: activeAgents } = await supabase
+    .from('profiles')
+    .select('id, email')
+    .eq('role', 'AGENT');
 
   const now = Date.now();
   let totalEscalated = 0;
@@ -99,7 +118,10 @@ export async function GET(req: Request) {
 
       // Compute target escalation level — only when deadline has passed
       let targetLevel = 0;
-      if (delayMinutes > 0) {
+      const isStuck = stuckLeadIds.has(lead.id);
+
+      // Do NOT escalate if the intake webhook failed/retrying (the agent hasn't received it yet!)
+      if (delayMinutes > 0 && !isStuck) {
         for (const threshold of escalationThresholds) {
           if (delayMinutes >= threshold.delayMinutes) {
             targetLevel = threshold.level;
@@ -131,6 +153,21 @@ export async function GET(req: Request) {
         };
         const severity = severityMap[targetLevel] ?? 'LOW';
 
+        // 🚨 Shark Tank Fallback: Auto-Assign unassigned leads at Level 2+
+        if (targetLevel >= 2 && !lead.assigned_agent_id && activeAgents && activeAgents.length > 0) {
+          const randomAgent = activeAgents[Math.floor(Math.random() * activeAgents.length)];
+          updateData.assigned_agent_id = randomAgent.id;
+          
+          try {
+            await logLeadEvent(
+              lead.id,
+              'System',
+              `Shark Tank Fallback: Lead auto-assigned to ${randomAgent.email} after 15+ minutes.`,
+              'HIGH'
+            );
+          } catch { /* ignore */ }
+        }
+
         try {
           await logLeadEvent(
             lead.id,
@@ -143,9 +180,9 @@ export async function GET(req: Request) {
         // Fire escalation webhook at level 3+
         if (targetLevel >= 3) {
           const webhookUrl =
-            process.env.NODE_ENV === 'production'
+            (process.env.NODE_ENV === 'production'
               ? process.env.N8N_PROD_WEBHOOK_URL
-              : process.env.N8N_WEBHOOK_URL;
+              : process.env.N8N_WEBHOOK_URL) || process.env.N8N_WEBHOOK_URL;
 
           if (webhookUrl) {
             const payload = {

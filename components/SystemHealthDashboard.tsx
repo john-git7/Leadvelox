@@ -13,6 +13,7 @@ import {
   Zap,
   RefreshCw,
   ArrowLeft,
+  Download,
 } from 'lucide-react';
 import Link from 'next/link';
 import { InfoTooltip } from '@/components/ui/info-tooltip';
@@ -43,6 +44,28 @@ type EscalationEvent = {
     name?: string | null;
   } | null;
 };
+
+function RetryCountdown({ nextRetryAt }: { nextRetryAt: string }) {
+  const [timeLeft, setTimeLeft] = useState<number>(() => {
+    return Math.max(0, new Date(nextRetryAt).getTime() - Date.now());
+  });
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const remaining = Math.max(0, new Date(nextRetryAt).getTime() - Date.now());
+      setTimeLeft(remaining);
+      if (remaining === 0) clearInterval(timer);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [nextRetryAt]);
+
+  if (timeLeft === 0) return <span className="text-yellow-500 font-bold">Retrying now...</span>;
+
+  const seconds = Math.floor(timeLeft / 1000);
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return <span suppressHydrationWarning>T-minus {m}:{s.toString().padStart(2, '0')}</span>;
+}
 
 function StatusBadge({ status }: { status: IntegrationStatus | 'UP' | 'DOWN' }) {
   const normalized = status === 'UP' ? 'healthy' : status === 'DOWN' ? 'down' : status;
@@ -193,7 +216,18 @@ export default function SystemHealthDashboard({
             <InfoTooltip content="A real-time overview of the engine capturing and routing your leads. This page tracks if external tools (like your CRM) are successfully receiving data, and catches leads that might otherwise slip through the cracks." />
           </h1>
         </div>
-        <StatusBadge status={overallStatus} />
+        <div className="flex items-center gap-3">
+          <a
+            href="/api/report"
+            download
+            className="inline-flex items-center gap-2 px-3 py-2 bg-[#111111] border border-[#262626] rounded text-[10px] font-bold uppercase tracking-widest text-muted-foreground hover:text-[#FAFAFA] hover:border-[#404040] transition-colors"
+            title="Download 30-day CSV operational summary"
+          >
+            <Download className="h-3 w-3" />
+            Download 30-Day Report
+          </a>
+          <StatusBadge status={overallStatus} />
+        </div>
       </div>
 
       {/* TIER 1: SUMMARY METRIC CARDS */}
@@ -371,7 +405,7 @@ export default function SystemHealthDashboard({
                       </Badge>
                       {retry.next_retry_at && (
                         <div suppressHydrationWarning className="text-[10px] text-zinc-500 mt-1 font-mono">
-                          Next: {new Date(retry.next_retry_at).toLocaleTimeString()}
+                          Next: <RetryCountdown nextRetryAt={retry.next_retry_at} />
                         </div>
                       )}
                     </div>

@@ -113,9 +113,10 @@ export async function logAutomationEvent(
  * Environment-aware, retry-safe logic.
  */
 export async function triggerOrchestration(leadId: string, leadData: LeadWebhookPayload) {
-  const webhookUrl = process.env.NODE_ENV === 'production' 
+  const webhookUrl = 
+    (process.env.NODE_ENV === 'production' 
     ? process.env.N8N_PROD_WEBHOOK_URL 
-    : process.env.N8N_WEBHOOK_URL;
+    : process.env.N8N_WEBHOOK_URL) || process.env.N8N_WEBHOOK_URL;
 
   if (!webhookUrl) {
     console.warn('Orchestration skipped: No webhook URL configured.');

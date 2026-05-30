@@ -8,6 +8,7 @@ const supabaseState = vi.hoisted(() => ({
 
 vi.mock('next/cache', () => ({
   revalidatePath: vi.fn(),
+  unstable_cache: (fn: any) => fn,
 }));
 
 vi.mock('../lib/orchestration', () => ({
@@ -79,11 +80,11 @@ describe('lead mutation RBAC', () => {
 
     await expect(deleteLead('lead-1')).resolves.toEqual({
       success: false,
-      error: 'Forbidden',
+      error: 'Access Denied: Only ADMIN or MANAGER can perform this action.',
     });
     await expect(toggleBusinessHours(false)).resolves.toEqual({
       success: false,
-      error: 'Forbidden',
+      error: 'Access Denied: Only ADMIN or MANAGER can perform this action.',
     });
 
     expect(supabaseState.deletedLeadId).toBeNull();

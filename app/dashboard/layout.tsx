@@ -27,6 +27,27 @@ export default async function DashboardLayout({ children }: { children: React.Re
   if (!user) {
     redirect('/login');
   }
+
+  // Fetch the user's role profile.
+  // Edge case: if the handle_new_user trigger failed at signup (e.g. transient
+  // DB error), the auth.users row exists but the profiles row does not.
+  // Rather than locking the user out permanently, we self-heal by inserting a
+  // default AGENT profile here. createAdminClient (service role) bypasses RLS.
+  let { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+
+  if (!profile) {
+    const { createAdminClient } = await import('@/lib/supabase/server');
+    const adminClient = await createAdminClient();
+    // upsert is idempotent: inserts if missing, does nothing if already present.
+    await adminClient
+      .from('profiles')
+      .upsert({ id: user.id, role: 'AGENT' }, { onConflict: 'id', ignoreDuplicates: true });
+    // Re-fetch so the layout has the correct role going forward.
+    const { data: repaired } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+    profile = repaired;
+  }
+
+  const role = profile?.role || 'AGENT';
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-[#FAFAFA]">
       {/* GLOBAL SYSTEM HEADER */}
@@ -64,6 +85,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <span className="text-[10px] font-mono text-muted-foreground truncate max-w-[160px]" title={user.email ?? ''}>
               {(user.email ?? '').length > 22 ? `${(user.email ?? '').slice(0, 22)}…` : (user.email ?? '')}
             </span>
+            <span className="text-[9px] font-bold text-[#FAFAFA] bg-[#262626] px-1.5 py-0.5 rounded-sm ml-1 uppercase tracking-widest">{role}</span>
           </div>
           <LogoutButton />
         </div>

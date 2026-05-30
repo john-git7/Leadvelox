@@ -1,0 +1,104 @@
+{
+  "name": "Lead Intake & Escalation Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-webhook",
+        "options": {}
+      },
+      "id": "1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.body.notification_type }}",
+              "value2": "Intake"
+            }
+          ]
+        }
+      },
+      "id": "2",
+      "name": "Route by Notification Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.body.callback_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-leadvelox-signature",
+              "value": "={{ $json.body.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "orchestration_id",
+              "value": "={{ $json.body.orchestration_id }}"
+            },
+            {
+              "name": "lead_id",
+              "value": "={{ $json.body.lead_id }}"
+            },
+            {
+              "name": "status",
+              "value": "Success"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3",
+      "name": "Send Callback to LeadVelox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [650, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Route by Notification Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Notification Type": {
+      "main": [
+        [
+          {
+            "node": "Send Callback to LeadVelox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

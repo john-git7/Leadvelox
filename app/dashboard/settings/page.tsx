@@ -54,7 +54,7 @@ export default async function SettingsPage() {
           Agency <span className="text-muted-foreground">Settings</span>
         </h1>
         <p className="text-sm text-zinc-400 mt-2 max-w-xl">
-          Configure operational parameters for this agency account: SLA timing, business hours, notification target, and revenue assumptions.
+          Configure operational parameters for this agency account: SLA timing, business hours, and revenue assumptions.
         </p>
       </div>
 
@@ -73,18 +73,6 @@ export default async function SettingsPage() {
             />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="notification_target" className="text-[10px] uppercase tracking-widest text-muted-foreground">
-              Notification Target
-            </Label>
-            <Input
-              id="notification_target"
-              name="notification_target"
-              defaultValue={settings.notification_target ?? ''}
-              placeholder="+15555550123 or ops@example.com"
-              className="bg-[#0A0A0A] border-[#262626] text-[#FAFAFA]"
-            />
-          </div>
 
           <div className="space-y-2">
             <Label htmlFor="sla_response_minutes" className="text-[10px] uppercase tracking-widest text-muted-foreground">

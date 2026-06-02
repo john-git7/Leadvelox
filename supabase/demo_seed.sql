@@ -6,12 +6,11 @@
 -- 1. CLEAR OLD DATA (preserves users/profiles)
 TRUNCATE TABLE lead_events RESTART IDENTITY CASCADE;
 TRUNCATE TABLE lead_groups RESTART IDENTITY CASCADE;
-TRUNCATE TABLE automation_health RESTART IDENTITY CASCADE;
+TRUNCATE TABLE automation_events RESTART IDENTITY CASCADE;
 DELETE FROM leads;
 
 -- 2. RESET SEQUENCES
 ALTER SEQUENCE IF EXISTS lead_events_id_seq RESTART WITH 1;
-ALTER SEQUENCE IF EXISTS automation_health_id_seq RESTART WITH 1;
 
 -- 3. INSERT DEMO LEADS
 -- Intentionally shows the full product story:
@@ -34,7 +33,7 @@ VALUES
     94,
     'HOT',
     false,
-    (NOW() - INTERVAL '3 hours')::text,
+    (NOW() - INTERVAL '3 hours'),
     'HEALTHY',
     NULL,
     NOW() - INTERVAL '4 hours',
@@ -54,9 +53,9 @@ VALUES
     88,
     'HIGH_RISK',
     false,
-    (NOW() - INTERVAL '90 minutes')::text,
+    (NOW() - INTERVAL '90 minutes'),
     'BREACHED',
-    (NOW() - INTERVAL '90 minutes')::text,
+    (NOW() - INTERVAL '90 minutes'),
     NOW() - INTERVAL '2 hours',
     NULL,
     NULL,
@@ -74,7 +73,7 @@ VALUES
     61,
     'WARM',
     true,
-    (NOW() + INTERVAL '1 hour')::text,
+    (NOW() + INTERVAL '1 hour'),
     'HEALTHY',
     NULL,
     NOW() - INTERVAL '30 minutes',
@@ -94,7 +93,7 @@ VALUES
     76,
     'WARM',
     false,
-    (NOW() + INTERVAL '2 hours')::text,
+    (NOW() + INTERVAL '2 hours'),
     'HEALTHY',
     NULL,
     NOW() - INTERVAL '6 hours',
@@ -114,9 +113,9 @@ VALUES
     42,
     'COLD',
     false,
-    (NOW() - INTERVAL '5 hours')::text,
+    (NOW() - INTERVAL '5 hours'),
     'BREACHED',
-    (NOW() - INTERVAL '5 hours')::text,
+    (NOW() - INTERVAL '5 hours'),
     NOW() - INTERVAL '8 hours',
     NOW() - INTERVAL '3 hours',
     NULL,
@@ -134,7 +133,7 @@ VALUES
     91,
     'HOT',
     false,
-    (NOW() + INTERVAL '3 minutes')::text,
+    (NOW() + INTERVAL '3 minutes'),
     'HEALTHY',
     NULL,
     NOW() - INTERVAL '2 minutes',
@@ -154,7 +153,7 @@ VALUES
     67,
     'WARM',
     false,
-    (NOW() + INTERVAL '45 minutes')::text,
+    (NOW() + INTERVAL '45 minutes'),
     'WARNING',
     NULL,
     NOW() - INTERVAL '1 hour',
@@ -167,10 +166,10 @@ VALUES
 -- 4. INSERT LEAD GROUPS (for duplicate detection display)
 INSERT INTO lead_groups (id, primary_email, primary_phone, created_at)
 VALUES
-  ('grp-0001-0000-0000-000000000001', 'marcus.webb@goldcapital.io', '+1 (305) 881-2244', NOW() - INTERVAL '4 hours');
+  ('f0000000-0000-0000-0000-000000000001', 'marcus.webb@goldcapital.io', '+1 (305) 881-2244', NOW() - INTERVAL '4 hours');
 
 -- Mark the duplicate lead as part of the group
-UPDATE leads SET lead_group_id = 'grp-0001-0000-0000-000000000001'
+UPDATE leads SET lead_group_id = 'f0000000-0000-0000-0000-000000000001'
 WHERE id IN (
   'a1b2c3d4-0001-0000-0000-000000000001',
   'a1b2c3d4-0003-0000-0000-000000000003'
@@ -230,8 +229,8 @@ INSERT INTO lead_events (lead_id, event_type, description, severity, created_at)
   ('a1b2c3d4-0007-0000-0000-000000000007', 'Status Change', 'Status updated: New Lead → Contacted. Intro call completed. Notes: Interested, needs budget approval.', 'INFO', NOW() - INTERVAL '35 minutes');
 
 
--- 6. INSERT AUTOMATION HEALTH EVENTS (Workflow Health Panel)
-INSERT INTO automation_health (lead_id, workflow_name, status, duration_ms, error_message, created_at, payload) VALUES
+-- 6. INSERT AUTOMATION EVENTS (Workflow Health Panel)
+INSERT INTO automation_events (lead_id, workflow_name, status, duration_ms, error_message, created_at, payload) VALUES
   ('a1b2c3d4-0001-0000-0000-000000000001', 'lead_intake_welcome_email', 'Success', 312, NULL, NOW() - INTERVAL '3 hours 58 minutes', '{"to": "marcus.webb@goldcapital.io", "template": "welcome_v2", "delivered": true}'),
   ('a1b2c3d4-0006-0000-0000-000000000006', 'lead_intake_welcome_email', 'Success', 298, NULL, NOW() - INTERVAL '1 minute 57 seconds', '{"to": "sofia.m@veritas-group.com", "template": "welcome_v2", "delivered": true}'),
   ('a1b2c3d4-0002-0000-0000-000000000002', 'sla_escalation_manager_webhook', 'Success', 541, NULL, NOW() - INTERVAL '1 hour 15 minutes', '{"channel": "#sales-alerts", "message": "CRITICAL: Priya Nair has not been contacted. 90 min overdue.", "delivered": true}'),

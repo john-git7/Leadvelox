@@ -193,28 +193,23 @@ export default function CommandCenter({ initialLeads, initialTotalCount, current
   const estimatedLoss = stats ? stats.highRisk * avgDealValue : 0;
 
   const handleSelectLeadById = useCallback(async (leadId: string) => {
-    console.log('[handleSelectLeadById] Triggered with leadId:', leadId);
-    // 1. Search locally in our active page list of leads
+    // Search locally in the active page list first
     const found = leads.find((l) => l.id === leadId);
     if (found) {
-      console.log('[handleSelectLeadById] Found lead locally:', found.name);
       setSelectedLead(found);
       return;
     }
 
-    console.log('[handleSelectLeadById] Lead not found locally. Fetching from server...');
-    // 2. Fetch from the database if not found locally
+    // Fetch from the database if not found in the current page
     try {
       const fetched = await getLead(leadId);
       if (fetched) {
-        console.log('[handleSelectLeadById] Fetched lead from server:', fetched.name);
         setSelectedLead(fetched as any);
       } else {
-        console.warn('[handleSelectLeadById] Lead not found on server or access denied.');
         toast.error('Lead not found or access denied');
       }
     } catch (err) {
-      console.error('[handleSelectLeadById] Failed to fetch lead:', err);
+      console.error('[CommandCenter] Failed to fetch lead:', err);
       toast.error('Error fetching lead details');
     }
   }, [leads]);
@@ -370,7 +365,7 @@ export default function CommandCenter({ initialLeads, initialTotalCount, current
           const newLead = payload.new;
           if (newLead.escalation_level >= 1 && (oldLead.escalation_level || 0) < 1 && newLead.assigned_agent_id === null) {
             playUrgentBeep();
-            toast.error(`🚨 SLA WARNING: '${newLead.name}' has been unclaimed for 5 minutes! Claim now!`, {
+            toast.error(`🚨 SLA ESCALATION: '${newLead.name}' has reached Level ${newLead.escalation_level}! Claim now!`, {
               duration: 10000,
               style: { background: '#ef4444', color: '#fff', fontWeight: 'bold' }
             });

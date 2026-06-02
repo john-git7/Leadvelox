@@ -77,36 +77,72 @@ interface LeadDetailModalProps {
 }
 
 // ─── SLA Live Countdown ────────────────────────────────────────────────────────
-function SLACountdown({ deadline, status }: { deadline: string | null; status: string }) {
+function SLACountdown({ deadline, status, escalationLevel }: { deadline: string | null; status: string; escalationLevel?: number }) {
   const [timeLeft, setTimeLeft] = useState('');
-  const [breached, setBreached] = useState(false);
+  const [targetLevel, setTargetLevel] = useState(0);
 
   useEffect(() => {
     if (!deadline || status !== 'New Lead') return;
     const calc = () => {
-      const diff = new Date(deadline).getTime() - Date.now();
-      if (diff <= 0) { setBreached(true); setTimeLeft('BREACHED'); return; }
+      const now = Date.now();
+      const baseMs = new Date(deadline).getTime();
+      
+      const thresholds = [
+        { level: 1, ms: baseMs },
+        { level: 2, ms: baseMs + 5 * 60000 },
+        { level: 3, ms: baseMs + 15 * 60000 },
+        { level: 4, ms: baseMs + 60 * 60000 },
+      ];
+
+      const currentLvl = escalationLevel || 0;
+      const next = thresholds.find(t => t.ms > now && t.level > currentLvl);
+
+      if (!next) {
+        setTargetLevel(-1);
+        setTimeLeft('MAX ESCALATION');
+        return;
+      }
+
+      setTargetLevel(next.level);
+      const diff = next.ms - now;
       const h = Math.floor(diff / 3600000);
       const m = Math.floor((diff % 3600000) / 60000);
       const s = Math.floor((diff % 60000) / 1000);
-      setBreached(false);
       setTimeLeft(h > 0 ? `${h}h ${m}m ${s}s` : `${m}m ${s}s`);
     };
     calc();
     const id = setInterval(calc, 1000);
     return () => clearInterval(id);
-  }, [deadline, status]);
+  }, [deadline, status, escalationLevel]);
 
-  if (!deadline || status !== 'New Lead') return <span className="text-zinc-600 font-mono text-xs">N/A</span>;
+  if (!deadline) return <span className="text-zinc-600 font-mono text-xs">N/A</span>;
+  if (status !== 'New Lead') {
+    if ((escalationLevel || 0) >= 4) {
+      return (
+        <div className="flex flex-col">
+          <span className="font-mono text-[11px] font-black tracking-tighter text-red-500">MAX ESCALATION</span>
+          <span className="text-[8px] text-zinc-500 uppercase tracking-widest mt-0.5">SLA STOPPED</span>
+        </div>
+      );
+    }
+    return <span className="text-zinc-600 font-mono text-xs">STOPPED AT L{escalationLevel || 0}</span>;
+  }
 
   return (
-    <span
-      className={`font-mono text-sm font-black tracking-tighter ${
-        breached ? 'text-red-500 animate-pulse' : 'text-orange-400'
-      }`}
-    >
-      {timeLeft}
-    </span>
+    <div className="flex flex-col">
+      <span
+        className={`font-mono text-[11px] font-black tracking-tighter ${
+          targetLevel === -1 ? 'text-red-500 animate-pulse' : 'text-orange-400'
+        }`}
+      >
+        {timeLeft}
+      </span>
+      {targetLevel !== -1 && (
+        <span className="text-[8px] text-zinc-500 uppercase tracking-widest mt-0.5">
+          until L{targetLevel} alert
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -361,13 +397,15 @@ export default function LeadDetailModal({
         {/* ── STATUS GLOW BAR ── */}
         <div
           className={`h-1 w-full ${
-            lead.sla_status === 'BREACHED'
+            isSuccess || lead.status === 'Closed'
+              ? 'bg-gradient-to-r from-emerald-700 via-emerald-500 to-emerald-700'
+              : lead.status !== 'New Lead'
+              ? 'bg-gradient-to-r from-blue-900 via-blue-600 to-blue-900'
+              : lead.sla_status === 'BREACHED'
               ? 'bg-gradient-to-r from-red-600 via-red-500 to-red-600 animate-pulse'
               : lead.sla_status === 'WARNING'
               ? 'bg-gradient-to-r from-yellow-600 via-yellow-400 to-yellow-600'
-              : isSuccess
-              ? 'bg-gradient-to-r from-emerald-700 via-emerald-500 to-emerald-700'
-              : 'bg-gradient-to-r from-blue-900 via-blue-600 to-blue-900'
+              : 'bg-gradient-to-r from-emerald-500 via-emerald-400 to-emerald-500'
           }`}
         />
 
@@ -465,7 +503,7 @@ export default function LeadDetailModal({
                     <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-1.5">
                       <Clock className="w-2.5 h-2.5" /> SLA Deadline
                     </span>
-                    <SLACountdown deadline={lead.response_deadline} status={lead.status} />
+                    <SLACountdown deadline={lead.response_deadline} status={lead.status} escalationLevel={lead.escalation_level} />
                   </div>
                   <div className="p-3 bg-[#111111] border border-[#1F1F1F] rounded-lg flex flex-col gap-1">
                     <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-1.5">
@@ -477,7 +515,7 @@ export default function LeadDetailModal({
                   </div>
                   <div className="p-3 bg-[#111111] border border-[#1F1F1F] rounded-lg flex flex-col gap-1">
                     <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-1.5">
-                      <TrendingUp className="w-2.5 h-2.5" /> Time to Contact
+                      <TrendingUp className="w-2.5 h-2.5" /> Agent Response Time
                     </span>
                     <span className={`text-[11px] font-mono font-bold ${timeToContact ? (timeToContact.includes('h') || parseInt(timeToContact) > 15 ? 'text-red-400' : 'text-emerald-400') : 'text-zinc-600'}`}>
                       {timeToContact ?? '—'}

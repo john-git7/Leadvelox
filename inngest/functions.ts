@@ -70,80 +70,79 @@ export const retryQueue = inngest.createFunction(
       return { processed: 0 };
     }
 
-    const results = [];
+    const results = await Promise.all(
+      events.map(event =>
+        step.run(`retry-event-${event.id}`, async () => {
+          const supabase = await createAdminClient();
+          const startTime = Date.now();
+          try {
+            if (!event.endpoint_url || !event.payload) {
+              throw new Error('Missing payload or endpoint URL');
+            }
 
-    for (const event of events) {
-      const res = await step.run(`retry-event-${event.id}`, async () => {
-        const supabase = await createAdminClient();
-        const startTime = Date.now();
-        try {
-          if (!event.endpoint_url || !event.payload) {
-            throw new Error('Missing payload or endpoint URL');
+            const res = await fetchWithTimeout(event.endpoint_url, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Orchestration-ID': event.id,
+              },
+              body: JSON.stringify(event.payload),
+            });
+
+            void (Date.now() - startTime);
+
+            if (res.ok) {
+              await supabase
+                .from('automation_events')
+                .update({ status: 'Success', error_message: null })
+                .eq('id', event.id);
+
+              try {
+                await logLeadEvent(
+                  event.lead_id,
+                  'Workflow',
+                  `Intake orchestration succeeded on retry #${event.retry_count + 1}`,
+                  'INFO'
+                );
+              } catch { /* ignore audit log errors */ }
+
+              return { id: event.id, status: 'Success' };
+            } else {
+              throw new Error(`HTTP Error ${res.status}`);
+            }
+          } catch (err: unknown) {
+            const errMsg = err instanceof Error ? err.message : 'Unknown error';
+            const nextCount = event.retry_count + 1;
+
+            if (nextCount >= MAX_RETRIES) {
+              await supabase
+                .from('automation_events')
+                .update({ status: 'Failed', retry_count: nextCount, error_message: errMsg })
+                .eq('id', event.id);
+
+              try {
+                await logLeadEvent(
+                  event.lead_id,
+                  'Workflow',
+                  `Intake orchestration FAILED permanently after ${MAX_RETRIES} retries. Manual intervention required.`,
+                  'CRITICAL'
+                );
+              } catch { /* ignore */ }
+
+              return { id: event.id, status: 'Failed' };
+            } else {
+              const nextRetryAt = calculateBackoff(nextCount).toISOString();
+              await supabase
+                .from('automation_events')
+                .update({ retry_count: nextCount, error_message: errMsg, next_retry_at: nextRetryAt })
+                .eq('id', event.id);
+
+              return { id: event.id, status: 'Retrying', attempt: nextCount };
+            }
           }
-
-          const res = await fetchWithTimeout(event.endpoint_url, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Orchestration-ID': event.id,
-            },
-            body: JSON.stringify(event.payload),
-          });
-
-          void (Date.now() - startTime); // duration logged below on failure path
-
-          if (res.ok) {
-            await supabase
-              .from('automation_events')
-              .update({ status: 'Success', error_message: null })
-              .eq('id', event.id);
-
-            try {
-              await logLeadEvent(
-                event.lead_id,
-                'Workflow',
-                `Intake orchestration succeeded on retry #${event.retry_count + 1}`,
-                'INFO'
-              );
-            } catch { /* ignore audit log errors on retry success */ }
-
-            return { id: event.id, status: 'Success' };
-          } else {
-            throw new Error(`HTTP Error ${res.status}`);
-          }
-        } catch (err: unknown) {
-          const errMsg = err instanceof Error ? err.message : 'Unknown error';
-          const nextCount = event.retry_count + 1;
-
-          if (nextCount >= MAX_RETRIES) {
-            await supabase
-              .from('automation_events')
-              .update({ status: 'Failed', retry_count: nextCount, error_message: errMsg })
-              .eq('id', event.id);
-
-            try {
-              await logLeadEvent(
-                event.lead_id,
-                'Workflow',
-                `Intake orchestration FAILED permanently after ${MAX_RETRIES} retries. Manual intervention required.`,
-                'CRITICAL'
-              );
-            } catch { /* ignore */ }
-
-            return { id: event.id, status: 'Failed' };
-          } else {
-            const nextRetryAt = calculateBackoff(nextCount).toISOString();
-            await supabase
-              .from('automation_events')
-              .update({ retry_count: nextCount, error_message: errMsg, next_retry_at: nextRetryAt })
-              .eq('id', event.id);
-
-            return { id: event.id, status: 'Retrying', attempt: nextCount };
-          }
-        }
-      });
-      results.push(res);
-    }
+        })
+      )
+    );
 
     return { processed: events.length, results };
   }

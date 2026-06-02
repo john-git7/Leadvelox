@@ -98,7 +98,7 @@ export default function AutomationHealth({
                   <span className="text-[11px] font-bold text-[#FAFAFA] uppercase tracking-tight">{event.workflow_name}</span>
                   <div className="flex items-center gap-2">
                     <span className="text-[9px] text-muted-foreground font-mono">
-                      {new Date(event.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      {new Date(event.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                     </span>
                     {event.duration_ms && (
                       <span className="text-[9px] text-blue-400 font-bold font-mono tracking-tighter">

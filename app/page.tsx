@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { AlertTriangle, Clock, Zap, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
+import { Logo } from '@/components/Logo';
 
 export default function Home() {
   const bookingUrl = process.env.NEXT_PUBLIC_BOOKING_URL || 'https://calendly.com/leadvelox/demo';
@@ -8,10 +9,8 @@ export default function Home() {
 
       {/* NAV */}
       <nav className="border-b border-[#262626] px-6 md:px-16 py-4 flex items-center justify-between sticky top-0 bg-[#0A0A0A]/95 backdrop-blur-sm z-50">
-        <div className="flex items-center gap-2">
-          <div className="w-5 h-5 bg-[#FAFAFA] rounded-sm flex items-center justify-center">
-            <div className="w-2.5 h-2.5 bg-[#0A0A0A] rounded-full" />
-          </div>
+        <div className="flex items-center gap-1">
+          <Logo className="h-7 w-auto text-[#FAFAFA]" />
           <span className="text-xs font-black tracking-tighter uppercase text-[#FAFAFA]">LeadVelox</span>
         </div>
         <div className="flex items-center gap-4">
@@ -277,10 +276,8 @@ export default function Home() {
 
       {/* FOOTER */}
       <footer className="px-6 md:px-16 py-8 border-t border-[#262626] flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-4 h-4 bg-[#FAFAFA] rounded-sm flex items-center justify-center">
-            <div className="w-2 h-2 bg-[#0A0A0A] rounded-full" />
-          </div>
+        <div className="flex items-center gap-1">
+          <Logo className="h-7 w-auto text-muted-foreground" />
           <span className="text-[10px] font-black tracking-tighter uppercase text-muted-foreground">LeadVelox</span>
         </div>
         <p className="text-[10px] text-muted-foreground font-mono">

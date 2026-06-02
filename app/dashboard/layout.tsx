@@ -1,9 +1,10 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { LogoutButton } from '@/components/LogoutButton';
+import { Logo } from '@/components/Logo';
 import SLABreachBanner from '@/components/SLABreachBanner';
 import LivePresence from '@/components/LivePresence';
-import { Activity, Settings } from 'lucide-react';
+import { Activity, Settings, ShieldCheck } from 'lucide-react';
 import { Suspense } from 'react';
 
 /**
@@ -53,10 +54,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
       {/* GLOBAL SYSTEM HEADER */}
       <div className="border-b border-[#262626] bg-[#0A0A0A] px-8 py-3 flex items-center justify-between">
         <div className="flex items-center gap-6">
-          <a href="/dashboard" className="flex items-center gap-2">
-            <div className="w-5 h-5 bg-[#FAFAFA] rounded-sm flex items-center justify-center">
-              <div className="w-2.5 h-2.5 bg-[#0A0A0A] rounded-full" />
-            </div>
+          <a href="/dashboard" className="flex items-center gap-1">
+            <Logo className="h-8 w-auto text-[#FAFAFA]" />
             <span className="text-sm font-bold tracking-tighter hidden sm:inline-block">LEADVELOX</span>
           </a>
           <nav className="flex items-center gap-3 md:gap-4 text-[10px] font-bold text-muted-foreground tracking-widest uppercase">
@@ -74,6 +73,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
               <Settings className="w-3 h-3" />
               Settings
             </a>
+            {role === 'ADMIN' && (
+              <a
+                href="/dashboard/setup-check"
+                className="flex items-center gap-1 text-zinc-600 hover:text-zinc-300 transition-colors"
+                title="Deployment readiness check (ADMIN only)"
+              >
+                <ShieldCheck className="w-3 h-3" />
+                Setup Check
+              </a>
+            )}
           </nav>
         </div>
 

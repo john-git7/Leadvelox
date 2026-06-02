@@ -133,7 +133,8 @@ export async function getLeadEvents(leadId: string) {
     .from('lead_events')
     .select('*')
     .eq('lead_id', leadId)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .limit(50);
   return data || [];
 }
 
@@ -312,7 +313,8 @@ export async function getBreachedLeads() {
     .select('*')
     .eq('sla_status', 'BREACHED')
     .in('status', ['New Lead'])
-    .order('sla_breached_at', { ascending: true });
+    .order('sla_breached_at', { ascending: true })
+    .limit(50);
 
   if (error) {
     console.error('Failed to fetch breached leads', error);
@@ -333,8 +335,10 @@ export async function getLeadStats() {
 
   const [total, hot, highRisk, duplicates, uncontacted] = await Promise.all([
     supabase.from('leads').select('*', { count: 'exact', head: true }),
-    supabase.from('leads').select('*', { count: 'exact', head: true }).eq('decay_status', 'HOT'),
-    supabase.from('leads').select('*', { count: 'exact', head: true }).or('decay_status.eq.HIGH_RISK,sla_status.eq.BREACHED'),
+    // Only count HOT leads that are still uncontacted — contacted HOT leads are no longer urgent
+    supabase.from('leads').select('*', { count: 'exact', head: true }).eq('decay_status', 'HOT').eq('status', 'New Lead'),
+    // HIGH_RISK / BREACHED only relevant for uncontacted leads
+    supabase.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'New Lead').or('decay_status.eq.HIGH_RISK,sla_status.eq.BREACHED'),
     supabase.from('leads').select('*', { count: 'exact', head: true }).eq('is_duplicate', true),
     supabase.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'New Lead'),
   ]);
@@ -743,3 +747,37 @@ export async function getLead(id: string) {
   return { ...rest, duplicate_reason };
 }
 
+/**
+ * FEATURE: REJECT LEAD DELETION REQUEST
+ * ADMIN and MANAGER only. Clears the delete_requested flag set by an agent,
+ * keeping the lead active in the queue.
+ */
+export async function rejectLeadDeletion(leadId: string) {
+  let authz;
+  try {
+    authz = await assertRole(['ADMIN', 'MANAGER']);
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Forbidden',
+    };
+  }
+
+  const { supabase, user, role } = authz;
+  const { error } = await supabase
+    .from('leads')
+    .update({ delete_requested: false })
+    .eq('id', leadId);
+
+  if (error) return { success: false, error: error.message };
+
+  await logLeadEvent(
+    leadId,
+    'System',
+    `Deletion request rejected by ${role} (${user.email ?? user.id}). Lead remains active.`,
+    'INFO'
+  );
+
+  revalidatePath('/dashboard');
+  return { success: true };
+}

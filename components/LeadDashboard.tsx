@@ -1,14 +1,14 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { updateLeadStatus, deleteLead, acknowledgeAlert, assignLead, requestLeadDeletion, bulkDeleteLeads } from '@/app/actions/leads';
+import { updateLeadStatus, deleteLead, acknowledgeAlert, assignLead, requestLeadDeletion, bulkDeleteLeads, rejectLeadDeletion } from '@/app/actions/leads';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { MoreVertical, Trash, AlertCircle, Zap, ShieldAlert, Clock, AlertTriangle, ChevronLeft, ChevronRight, UserRound, UserCheck } from 'lucide-react';
+import { MoreVertical, Trash, AlertCircle, Zap, ShieldAlert, Clock, AlertTriangle, ChevronLeft, ChevronRight, UserRound, UserCheck, XCircle, CheckCircle2 } from 'lucide-react';
 import { DecayStatus } from '@/lib/orchestration';
 import { SLAStatus } from '@/lib/sla';
 import type { Agent } from './CommandCenter';
@@ -292,6 +292,16 @@ export default function LeadDashboard({
       onLeadsChange(leads.map(l => l.id === id ? { ...l, delete_requested: true } : l));
     } else {
       toast.error(result.error || 'Request failed');
+    }
+  };
+
+  const handleRejectDeletion = async (id: string) => {
+    const result = await rejectLeadDeletion(id);
+    if (result.success) {
+      toast.success('Deletion request rejected. Lead remains active.');
+      onLeadsChange(leads.map(l => l.id === id ? { ...l, delete_requested: false } : l));
+    } else {
+      toast.error(result.error || 'Failed to reject deletion request');
     }
   };
 
@@ -584,14 +594,26 @@ export default function LeadDashboard({
 
                     {/* Decay */}
                     <TableCell className="py-2">
-                      <div
-                        title="Algorithmic grade indicating conversion likelihood based on time decay"
-                        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[9px] font-bold border ${getDecayColor(lead.decay_status)}`}
-                      >
-                        {lead.decay_status === 'HOT' && <Zap className="w-2.5 h-2.5 fill-current" />}
-                        {lead.decay_status === 'HIGH_RISK' && <AlertCircle className="w-2.5 h-2.5" />}
-                        {lead.decay_status}
-                      </div>
+                      {lead.status === 'New Lead' ? (
+                        // Active decay — only meaningful while the lead is uncontacted
+                        <div
+                          title="Algorithmic grade indicating conversion likelihood based on time since inquiry"
+                          className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[9px] font-bold border ${getDecayColor(lead.decay_status)}`}
+                        >
+                          {lead.decay_status === 'HOT' && <Zap className="w-2.5 h-2.5 fill-current" />}
+                          {lead.decay_status === 'HIGH_RISK' && <AlertCircle className="w-2.5 h-2.5" />}
+                          {lead.decay_status}
+                        </div>
+                      ) : (
+                        // Lead has been actioned — decay is no longer the operative metric
+                        <div
+                          title={`Lead status: ${lead.status} — decay frozen at contact`}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold border border-zinc-700/40 bg-zinc-800/30 text-zinc-600"
+                        >
+                          <CheckCircle2 className="w-2.5 h-2.5" />
+                          RESOLVED
+                        </div>
+                      )}
                     </TableCell>
 
                     {/* Status */}
@@ -641,12 +663,26 @@ export default function LeadDashboard({
                                 <Trash className="w-3.5 h-3.5 mr-2" /> Request Deletion
                               </DropdownMenuItem>
                             ) : (
-                              <DropdownMenuItem
-                                className="text-[11px] font-medium text-red-500 focus:text-red-500 focus:bg-red-500/10 cursor-pointer"
-                                onClick={(e) => { e.stopPropagation(); setLeadToDelete(lead); }}
-                              >
-                                <Trash className="w-3.5 h-3.5 mr-2" /> Delete Lead
-                              </DropdownMenuItem>
+                              <>
+                                {/* Reject a pending deletion request — clears the flag, keeps the lead */}
+                                {lead.delete_requested && (
+                                  <DropdownMenuItem
+                                    className="text-[11px] font-medium text-green-500 focus:text-green-500 focus:bg-green-500/10 cursor-pointer"
+                                    onClick={(e) => { e.stopPropagation(); handleRejectDeletion(lead.id); }}
+                                  >
+                                    <XCircle className="w-3.5 h-3.5 mr-2" /> Reject Deletion Request
+                                  </DropdownMenuItem>
+                                )}
+                                {lead.delete_requested && (
+                                  <DropdownMenuSeparator className="bg-[#262626]" />
+                                )}
+                                <DropdownMenuItem
+                                  className="text-[11px] font-medium text-red-500 focus:text-red-500 focus:bg-red-500/10 cursor-pointer"
+                                  onClick={(e) => { e.stopPropagation(); setLeadToDelete(lead); }}
+                                >
+                                  <Trash className="w-3.5 h-3.5 mr-2" /> Delete Lead
+                                </DropdownMenuItem>
+                              </>
                             )}
                           </DropdownMenuContent>
                         </DropdownMenu>

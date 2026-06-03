@@ -133,10 +133,10 @@ VALUES
     91,
     'HOT',
     false,
-    (NOW() + INTERVAL '3 minutes'),
+    (NOW() + INTERVAL '5 minutes'),
     'HEALTHY',
     NULL,
-    NOW() - INTERVAL '2 minutes',
+    NOW(),
     NULL,
     NULL,
     0
@@ -218,8 +218,8 @@ INSERT INTO lead_events (lead_id, event_type, description, severity, created_at)
 
 -- Sofia Mendes — brand new, SLA ticking NOW
 INSERT INTO lead_events (lead_id, event_type, description, severity, created_at) VALUES
-  ('a1b2c3d4-0006-0000-0000-000000000006', 'Intake', 'Lead received via Instagram ad. Urgency score: 91. SLA window: 5 minutes.', 'INFO', NOW() - INTERVAL '2 minutes'),
-  ('a1b2c3d4-0006-0000-0000-000000000006', 'Automation', 'Instant acknowledgement email dispatched via n8n. Response time: 3 seconds.', 'INFO', NOW() - INTERVAL '1 minute 57 seconds');
+  ('a1b2c3d4-0006-0000-0000-000000000006', 'Intake', 'Lead received via Instagram ad. Urgency score: 91. SLA window: 5 minutes.', 'INFO', NOW()),
+  ('a1b2c3d4-0006-0000-0000-000000000006', 'Automation', 'Instant acknowledgement email dispatched via n8n. Response time: 3 seconds.', 'INFO', NOW() + INTERVAL '3 seconds');
 
 -- James Oduya — contacted, SLA warning
 INSERT INTO lead_events (lead_id, event_type, description, severity, created_at) VALUES
@@ -232,7 +232,7 @@ INSERT INTO lead_events (lead_id, event_type, description, severity, created_at)
 -- 6. INSERT AUTOMATION EVENTS (Workflow Health Panel)
 INSERT INTO automation_events (lead_id, workflow_name, status, duration_ms, error_message, created_at, payload) VALUES
   ('a1b2c3d4-0001-0000-0000-000000000001', 'lead_intake_welcome_email', 'Success', 312, NULL, NOW() - INTERVAL '3 hours 58 minutes', '{"to": "marcus.webb@goldcapital.io", "template": "welcome_v2", "delivered": true}'),
-  ('a1b2c3d4-0006-0000-0000-000000000006', 'lead_intake_welcome_email', 'Success', 298, NULL, NOW() - INTERVAL '1 minute 57 seconds', '{"to": "sofia.m@veritas-group.com", "template": "welcome_v2", "delivered": true}'),
+  ('a1b2c3d4-0006-0000-0000-000000000006', 'lead_intake_welcome_email', 'Success', 298, NULL, NOW() + INTERVAL '3 seconds', '{"to": "sofia.m@veritas-group.com", "template": "welcome_v2", "delivered": true}'),
   ('a1b2c3d4-0002-0000-0000-000000000002', 'sla_escalation_manager_webhook', 'Success', 541, NULL, NOW() - INTERVAL '1 hour 15 minutes', '{"channel": "#sales-alerts", "message": "CRITICAL: Priya Nair has not been contacted. 90 min overdue.", "delivered": true}'),
   ('a1b2c3d4-0005-0000-0000-000000000005', 'sla_escalation_manager_webhook', 'Failed', 4200, 'Slack API error: channel not found (#sales-critical). Webhook aborted.', NOW() - INTERVAL '6 hours', '{"channel": "#sales-critical", "attempted": true}'),
   ('a1b2c3d4-0007-0000-0000-000000000007', 'lead_intake_welcome_email', 'Success', 405, NULL, NOW() - INTERVAL '58 minutes', '{"to": "j.oduya@bluepointventures.com", "template": "outreach_v1", "delivered": true}'),

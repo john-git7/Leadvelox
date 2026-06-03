@@ -342,6 +342,10 @@ export default function LeadDetailModal({
       setEventsLoading(true);
       getLeadEvents(lead.id)
         .then((e) => setEvents(e as LeadEvent[]))
+        .catch((err) => {
+          console.error('Failed to fetch lead events:', err);
+          setEvents([]);
+        })
         .finally(() => setEventsLoading(false));
     } else {
       setEvents([]);

@@ -10,8 +10,15 @@ const poppins = Poppins({
 });
 
 export const metadata: Metadata = {
-  title: "Real Estate Lead Automation",
-  description: "Premium lead operations tool for real estate professionals.",
+  title: "LeadVelox | The Operational Monitor for Real Estate Teams",
+  description: "Know within minutes when a lead goes uncontacted. Stop losing leads to slow response with our premium operational infrastructure.",
+  icons: {
+    icon: '/icon.svg',
+  },
+  // To verify Google Search Console, you will add your code here:
+  // verification: {
+  //   google: 'YOUR_GSC_VERIFICATION_CODE',
+  // },
 };
 
 export default function RootLayout({
@@ -25,6 +32,19 @@ export default function RootLayout({
       className={`${poppins.variable} h-full antialiased dark bg-[#0A0A0A] text-[#FAFAFA] font-sans`}
     >
       <body className="min-h-full flex flex-col">
+        {/* Google Schema.org structured data to tell Google what your logo is */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "Organization",
+              "name": "LeadVelox",
+              "url": "https://leadvelox.xyz",
+              "logo": "https://leadvelox.xyz/logo.svg"
+            })
+          }}
+        />
         {children}
         <Toaster theme="dark" />
       </body>

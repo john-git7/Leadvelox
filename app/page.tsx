@@ -8,6 +8,50 @@ export default function Home() {
   const bookingUrl = process.env.NEXT_PUBLIC_BOOKING_URL || 'https://calendly.com/leadvelox/demo';
   return (
     <main className="min-h-screen bg-[#0A0A0A] text-[#FAFAFA]">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "How is this different from just using a CRM?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Most CRMs record what happened in the past. LeadVelox tells you what's about to go wrong right now. It sits on top of your CRM as an operational monitor to enforce accountability and speed-to-lead."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How does a lead get into the system?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Your website form, ad landing pages (Zillow, Facebook, etc.), or any source that can send a webhook. We connect it during setup so leads instantly flow into LeadVelox."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Do you send the automated emails or do we?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Your team sends the personalized relationship emails. What LeadVelox does is track the response time, fire the internal escalation alerts to management, and make sure no lead is ignored."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How long does setup take?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Once you pay the initial $525, we deploy your instance within 48 hours. The onboarding call takes about 45 minutes to configure your specific SLA response rules."
+                }
+              }
+            ]
+          })
+        }}
+      />
+
 
       {/* NAV */}
       <nav className="border-b border-[#262626] px-6 md:px-16 py-4 flex items-center justify-between sticky top-0 bg-[#0A0A0A]/95 backdrop-blur-sm z-50">

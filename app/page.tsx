@@ -5,7 +5,7 @@ import { DemoVideo } from '@/components/DemoVideo';
 import { FAQAccordion } from '@/components/FAQAccordion';
 
 export default function Home() {
-  const bookingUrl = process.env.NEXT_PUBLIC_BOOKING_URL || 'https://calendly.com/leadvelox/demo';
+  const bookingUrl = process.env.NEXT_PUBLIC_BOOKING_URL || 'https://calendly.com/leadvelox-business/30min';
   return (
     <main className="min-h-screen bg-[#0A0A0A] text-[#FAFAFA]">
       <script

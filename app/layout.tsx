@@ -12,6 +12,15 @@ const poppins = Poppins({
 export const metadata: Metadata = {
   title: "LeadVelox | The Operational Monitor for Real Estate Teams",
   description: "Know within minutes when a lead goes uncontacted. Stop losing leads to slow response with our premium operational infrastructure.",
+  keywords: [
+    "real estate lead response",
+    "speed to lead real estate",
+    "real estate accountability software",
+    "lead leakage real estate",
+    "real estate operational monitor",
+    "lead follow up tracker",
+    "real estate SLA monitor"
+  ],
   icons: {
     icon: '/icon.svg',
   },

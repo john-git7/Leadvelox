@@ -191,9 +191,9 @@ export default function Home() {
             {/* Setup */}
             <div className="p-6 bg-[#0A0A0A] border border-[#262626] rounded-lg space-y-4">
               <div>
-                <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Setup (50/50 Split)</p>
-                <p className="text-4xl font-black tracking-tighter text-[#FAFAFA]">$1,050</p>
-                <p className="text-[10px] text-muted-foreground font-mono mt-2">$525 initial + $525 at 30 days</p>
+                <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Setup</p>
+                <p className="text-3xl font-black tracking-tighter text-[#FAFAFA]">Custom Implementation</p>
+                <p className="text-[10px] text-muted-foreground font-mono mt-2">One-time deployment fee</p>
               </div>
               <div className="border-t border-[#262626] pt-4 space-y-2.5">
                 {[
@@ -228,8 +228,8 @@ export default function Home() {
             {/* Monthly */}
             <div className="p-6 bg-[#0A0A0A] border border-[#FAFAFA]/10 rounded-lg space-y-4 ring-1 ring-[#FAFAFA]/5">
               <div>
-                <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Monthly Retainer</p>
-                <p className="text-4xl font-black tracking-tighter text-[#FAFAFA]">$220<span className="text-lg text-muted-foreground font-bold">/mo</span></p>
+                <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Ongoing Ops</p>
+                <p className="text-3xl font-black tracking-tighter text-[#FAFAFA]">Custom Retainer</p>
               </div>
               <div className="border-t border-[#262626] pt-4 space-y-2.5">
                 {[
@@ -264,29 +264,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ROI CALCULATOR — STATIC */}
-      <section className="px-6 md:px-16 py-20 max-w-3xl mx-auto text-center">
-        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-4">The Math</p>
-        <h2 className="text-3xl font-black tracking-tighter uppercase italic mb-8">
-          One Recovered Deal Pays For <span className="text-muted-foreground">2+ Years</span>
-        </h2>
-        <div className="grid grid-cols-3 gap-4 mb-8">
-          {[
-            { label: 'Avg commission', value: '$9,000' },
-            { label: 'Annual cost', value: '$3,400' },
-            { label: 'Breakeven', value: '0.4 deals' },
-          ].map((item, i) => (
-            <div key={i} className="p-4 bg-[#111111] border border-[#262626] rounded-lg">
-              <p className="text-2xl font-black tracking-tighter text-[#FAFAFA]">{item.value}</p>
-              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest mt-1">{item.label}</p>
-            </div>
-          ))}
-        </div>
-        <p className="text-[13px] text-muted-foreground">
-          If you close <strong className="text-[#FAFAFA]">one additional deal per year</strong> because you responded faster,
-          this system pays for itself <strong className="text-[#FAFAFA]">2.6x over</strong>.
-        </p>
-      </section>
+
 
       {/* FAQ SECTION */}
       <section className="px-6 md:px-16 py-20 max-w-3xl mx-auto border-t border-[#262626]">

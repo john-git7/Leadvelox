@@ -22,7 +22,7 @@ const faqs = [
   },
   {
     q: "How long does setup take?",
-    a: "Once you pay the initial $525, we deploy your instance within 48 hours. The onboarding call takes about 45 minutes to configure your specific SLA response rules."
+    a: "After your custom demo and onboarding, we deploy your instance within 48 hours. The setup call takes about 45 minutes to configure your specific SLA response rules."
   },
   {
     q: "Am I locked into a long-term contract?",

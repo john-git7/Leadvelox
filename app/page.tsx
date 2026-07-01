@@ -44,7 +44,7 @@ export default function Home() {
                 "name": "How long does setup take?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Once you pay the initial $525, we deploy your instance within 48 hours. The onboarding call takes about 45 minutes to configure your specific SLA response rules."
+                  "text": "After your custom demo and onboarding, we deploy your instance within 48 hours. The setup call takes about 45 minutes to configure your specific SLA response rules."
                 }
               }
             ]
@@ -89,9 +89,9 @@ export default function Home() {
         </h1>
 
         <p className="text-base md:text-xl text-muted-foreground max-w-2xl mx-auto mb-10 leading-relaxed">
-          The operational monitor <strong className="text-[#FAFAFA]">for real estate teams.</strong> Know <strong className="text-[#FAFAFA]">within minutes</strong> when a lead goes uncontacted.
+          The operational monitor <strong className="text-[#FAFAFA]">for study abroad consultancies.</strong> Know <strong className="text-[#FAFAFA]">within minutes</strong> when a lead goes uncontacted.
           Get alerted before they call your competitor.
-          See exactly where your agents are dropping the ball — in real time.
+          See exactly where your counselors are dropping the ball — in real time.
         </p>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
@@ -115,7 +115,7 @@ export default function Home() {
         <DemoVideo />
 
         <p className="text-[11px] text-muted-foreground font-mono">
-          Setup: <strong className="text-[#FAFAFA]">$525 start / $525 completion</strong> · Monthly: <strong className="text-[#FAFAFA]">$220/month</strong> · No contract
+          Setup: <strong className="text-[#FAFAFA]">₹15,000 one-time</strong> · Monthly: <strong className="text-[#FAFAFA]">₹2,000/month</strong> · No contract
         </p>
       </section>
 
@@ -161,7 +161,7 @@ export default function Home() {
             {[
               { step: '01', event: 'Lead Enters', detail: 'From your website, ads, or portals', color: 'text-[#FAFAFA]', dot: 'bg-[#FAFAFA]' },
               { step: '02', event: 'Timer Starts', detail: 'SLA countdown begins immediately', color: 'text-blue-400', dot: 'bg-blue-500' },
-              { step: '03', event: 'Response Tracked', detail: 'System monitors agent activity', color: 'text-yellow-400', dot: 'bg-yellow-500' },
+              { step: '03', event: 'Response Tracked', detail: 'System monitors counselor activity', color: 'text-yellow-400', dot: 'bg-yellow-500' },
               { step: '04', event: 'Escalation Triggered', detail: 'If the lead is ignored past deadline', color: 'text-orange-400', dot: 'bg-orange-500' },
               { step: '05', event: 'Notification Delivered', detail: 'Manager alerted via Slack or Email', color: 'text-red-400', dot: 'bg-red-500' },
               { step: '06', event: 'Activity Logged', detail: 'Full audit trail of the entire sequence', color: 'text-green-400', dot: 'bg-green-500' },
@@ -328,7 +328,7 @@ export default function Home() {
             <span className="text-[10px] font-black tracking-tighter uppercase text-muted-foreground">LeadVelox</span>
           </div>
           <p className="text-[10px] text-muted-foreground font-mono hidden md:block">
-            Operational infrastructure for real estate agencies
+            Operational infrastructure for study abroad consultancies
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-6">
